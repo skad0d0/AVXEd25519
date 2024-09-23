@@ -133,17 +133,27 @@ void ted_table_query_v2(ProPoint *r, const int pos, __m256i b)
     uint64_t xcoor, ycoor, zcoor;
     int i, j;
     uint32_t index0, index1, index2, index3;
-
     index0 = VEXTR32(babs, 0);
     index1 = VEXTR32(babs, 2);
     index2 = VEXTR32(babs, 4);
     index3 = VEXTR32(babs, 6);
+    // index0 = get_lane(&babs, 0);
+    // index1 = get_lane(&babs, 2);
+    // index2 = get_lane(&babs, 4);
+    // index3 = get_lane(&babs, 6);
     
+    // for (i = 0; i < 4; i++)
+    // {
+    //   xP[i] = VSET64(base_v2[pos][index3].x[i],base_v2[pos][index2].x[i],base_v2[pos][index1].x[i], base_v2[pos][index0].x[i]);
+    //   yP[i] = VSET64(base_v2[pos][index3].y[i],base_v2[pos][index2].y[i],base_v2[pos][index1].y[i], base_v2[pos][index0].y[i]);
+    //   zP[i] = VSET64(base_v2[pos][index3].z[i],base_v2[pos][index2].z[i],base_v2[pos][index1].z[i], base_v2[pos][index0].z[i]);
+    // }
+
     for (i = 0; i < 4; i++)
     {
-      xP[i] = VSET64(base_v2[pos][index3].x[i],base_v2[pos][index2].x[i],base_v2[pos][index1].x[i], base_v2[pos][index0].x[i]);
-      yP[i] = VSET64(base_v2[pos][index3].y[i],base_v2[pos][index2].y[i],base_v2[pos][index1].y[i], base_v2[pos][index0].y[i]);
-      zP[i] = VSET64(base_v2[pos][index3].z[i],base_v2[pos][index2].z[i],base_v2[pos][index1].z[i], base_v2[pos][index0].z[i]);
+      load_vector(&xP[i], base_v2[pos][index0].x[i], base_v2[pos][index1].x[i], base_v2[pos][index2].x[i], base_v2[pos][index3].x[i]);
+      load_vector(&yP[i], base_v2[pos][index0].y[i], base_v2[pos][index1].y[i], base_v2[pos][index2].y[i], base_v2[pos][index3].y[i]);
+      load_vector(&zP[i], base_v2[pos][index0].z[i], base_v2[pos][index1].z[i], base_v2[pos][index2].z[i], base_v2[pos][index3].z[i]);
     }
 
     // if b<0, bsign = 1, bmask is all 1; if b>0, bsign = 0, bmask is all 0.
@@ -824,10 +834,14 @@ void jsf_query_v2(ProPoint *r, ProPoint *table, const __m256i d)
 
   uint32_t index0, index1, index2, index3;
 
-  index0 = VEXTR32(dabs, 0);
-  index1 = VEXTR32(dabs, 2);
-  index2 = VEXTR32(dabs, 4);
-  index3 = VEXTR32(dabs, 6);
+  // index0 = VEXTR32(dabs, 0);
+  // index1 = VEXTR32(dabs, 2);
+  // index2 = VEXTR32(dabs, 4);
+  // index3 = VEXTR32(dabs, 6);
+  index0 = get_lane(&dabs, 0);
+  index1 = get_lane(&dabs, 2);
+  index2 = get_lane(&dabs, 4);
+  index3 = get_lane(&dabs, 6);
 
   get_channel(xcoor0, table[index0].x, 0); get_channel(ycoor0, table[index0].y, 0); get_channel(zcoor0, table[index0].z, 0);
   get_channel(xcoor1, table[index1].x, 2); get_channel(ycoor1, table[index1].y, 2); get_channel(zcoor1, table[index1].z, 2);

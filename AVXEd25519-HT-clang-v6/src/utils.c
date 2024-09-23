@@ -150,3 +150,25 @@ void get_channel(uint32_t *r, const __m256i *a, const int ch)
   for (i = 0; i < NWORDS; i++) r[i] = ((uint32_t*)&a[i])[ch];
 }
 
+uint32_t get_lane(const __m256i *a, const int ch)
+{
+  uint32_t r;
+  r = ((uint32_t*)a)[ch];
+  return r;
+}
+
+// equal to xP = VSET(a3, a2, a1, a0)
+void load_vector_64(__m256i *xP, const uint64_t a0, const uint64_t a1, const uint64_t a2, const uint64_t a3)
+{
+  uint64_t values[4] = {a0, a1, a2, a3};
+  memcpy(xP, values, sizeof(__m256i));
+}
+
+void load_vector(__m256i *xP, const uint64_t a0, const uint64_t a1, const uint64_t a2, const uint64_t a3) 
+{
+    uint64_t *value = (uint64_t*)xP;
+    value[0] = a0;
+    value[1] = a1;
+    value[2] = a2;
+    value[3] = a3;
+}

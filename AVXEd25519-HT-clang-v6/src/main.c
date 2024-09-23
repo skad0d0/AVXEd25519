@@ -41,7 +41,7 @@ void test_dsmul()
 
 
     ProPoint r;
-    ted_sep_double_scalar_mul(&r, &a, s1, s2);
+    ted_sep_double_scalar_mul_v2(&r, &a, s1, s2);
 
     AffPoint h;
 
@@ -262,26 +262,26 @@ void timing_point_arith()
 
        
 
-        // // load cache
-        // for (i = 0; i < iterations; i++) ted_sep_double_scalar_mul(&h, &p, s, t);
-        // start_cycles = read_tsc();
-        // for (i = 0; i < iterations; i++)
-        // {
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        // }
-        // end_cycles = read_tsc();
-        // diff_cycles = (end_cycles-start_cycles)/(10*iterations);
-        // printf("* 4-Way Separate double-scalar Point multiplication: %lld\n", diff_cycles);
-        // printf("* single Separate double-scalar Point multiplication: %lld\n", diff_cycles/4);
+        // load cache
+        for (i = 0; i < iterations; i++) ted_sep_double_scalar_mul(&h, &p, s, t);
+        start_cycles = read_tsc();
+        for (i = 0; i < iterations; i++)
+        {
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+            ted_sep_double_scalar_mul(&h, &p, s, t);
+        }
+        end_cycles = read_tsc();
+        diff_cycles = (end_cycles-start_cycles)/(10*iterations);
+        printf("* 4-Way Separate double-scalar Point multiplication: %lld\n", diff_cycles);
+        printf("* single Separate double-scalar Point multiplication: %lld\n", diff_cycles/4);
 
         // load cache
         for (i = 0; i < iterations; i++) ted_sep_double_scalar_mul_v2(&h, &p, s, t);
@@ -303,6 +303,30 @@ void timing_point_arith()
         diff_cycles = (end_cycles-start_cycles)/(10*iterations);
         printf("* 4-Way Separate double-scalar Point multiplication (load table once): %lld\n", diff_cycles);
         printf("* single Separate double-scalar Point multiplication (load table once): %lld\n", diff_cycles/4);
+        
+        
+        // for (i = 0; i < iterations; i++) ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        // start_cycles = read_tsc();
+        // for (i = 0; i < iterations; i++)
+        // {
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        //     ted_sim_double_scalar_mul(&h, &p, a.x, r.x);
+        // }
+        // end_cycles = read_tsc();
+        // diff_cycles = (end_cycles-start_cycles)/(10*iterations);
+        // printf("* 4-Way Simultaneous double-scalar Point multiplication: %lld\n", diff_cycles);
+        // printf("* single Simultaneous double-scalar Point multiplication: %lld\n", diff_cycles/4);
+
+
+
 
         for (i = 0; i < iterations; i++) ted_sim_double_scalar_mul_v2(&h, &p, s, t);
         start_cycles = read_tsc();
@@ -390,8 +414,27 @@ void test_fix_mul()
 }
 
 
+void test_get_lane()
+{
+    const __m256i a = VSET64(3, 2, 1, 0);
+    uint32_t t;
+    t = get_lane(&a, 6);
+    printf("t = %u\n", t);
+}
+
+void test_load_vector()
+{
+    __m256i xP;
+    load_vector(&xP, 1, 2, 3, 4);
+    uint64_t t;
+    t = VEXTR32(xP, 0);
+    printf("t = %u\n", t);
+}
+
 int main(){
     // test_dsmul();
+    // test_get_lane();
     timing_point_arith();
+    // test_load_vector();
     return 0;
 }
