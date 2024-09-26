@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "gfparith.h"
-#define A_WINDOW 7
-#define B_WINDOW 4
+#define A_WINDOW 5
+#define B_WINDOW 7
 
 typedef struct
 {
