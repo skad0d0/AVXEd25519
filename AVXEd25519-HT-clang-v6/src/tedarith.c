@@ -1,6 +1,7 @@
 #include "tedarith.h"
 #include "utils.h"
 #include "jsf.h"
+#include "wnaf.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -14,6 +15,26 @@ static void ted_ext_initialize(ExtPoint *p)
     mpi29_ini_to_one_avx2(p->h);
 }
 
+static void ted_pro_initialize(ProPoint *p)
+{
+  mpi29_ini_to_zero_avx2(p->x);
+  mpi29_ini_to_one_avx2(p->y);
+  mpi29_ini_to_one_avx2(p->z);
+}
+void ted_copy_ext_to_pro(ProPoint *r, ExtPoint *p)
+{
+  mpi29_copy_avx2(r->x, p->x);
+  mpi29_copy_avx2(r->y, p->y);
+  mpi29_copy_avx2(r->z, p->z);
+}
+
+void ted_copy_pro_to_ext(ExtPoint *r, ProPoint *p)
+{
+  ted_ext_initialize(r);
+  mpi29_copy_avx2(r->x, p->x);
+  mpi29_copy_avx2(r->y, p->y);
+  mpi29_copy_avx2(r->z, p->z);
+}
 // Point addition R = P + Q, Q is in duif point
 void ted_add(ExtPoint *r, ExtPoint *p, ProPoint *q)
 {
@@ -127,7 +148,7 @@ void ted_table_query_v2(ProPoint *r, const int pos, __m256i b)
     const __m256i zero = VZERO;
 
     __m256i xP[4], yP[4], zP[4];
-    __m256i mask;
+
     __m256i t[NWORDS];
     __m256i temp, bsign, bmask;
     uint64_t xcoor, ycoor, zcoor;
@@ -737,6 +758,396 @@ void ted_Z1_add(ProPoint *r, ProPoint *a, ProPoint *b)
 
 }
 
+// compute table for variable point A at run time, w = 5
+void compute_table_A(ProPoint *t, ProPoint *p)
+{
+  ExtPoint h;
+  ted_ext_initialize(&h);
+  mpi29_copy_avx2(h.x, p->x);
+  mpi29_copy_avx2(h.y, p->y);
+  mpi29_copy_avx2(h.z, p->z);
+  // compute 2P
+  ted_dbl(&h, &h);
+  ProPoint p_dbl;
+  ted_copy_ext_to_pro(&p_dbl, &h);
+
+  // compute table[P, 3P, 5P, ... , 15P] 8 points in total
+  // P
+  mpi29_copy_avx2(t[0].x, p->x);
+  mpi29_copy_avx2(t[0].y, p->y);
+  mpi29_copy_avx2(t[0].z, p->z);
+  // 3P
+  ted_pro_add(&t[1], &t[0], &p_dbl);
+  // 5P
+  ted_pro_add(&t[2], &t[1], &p_dbl);
+  // 7P
+  ted_pro_add(&t[3], &t[2], &p_dbl);
+  // 9P
+  ted_pro_add(&t[4], &t[3], &p_dbl);
+  // 11P
+  ted_pro_add(&t[5], &t[4], &p_dbl);
+  // 13P
+  ted_pro_add(&t[6], &t[5], &p_dbl);
+  // 15P
+  ted_pro_add(&t[7], &t[6], &p_dbl);
+}
+
+void compute_table_A_v2(ProPoint *t, ProPoint *p)
+{
+  ExtPoint h;
+  ted_ext_initialize(&h);
+  mpi29_copy_avx2(h.x, p->x);
+  mpi29_copy_avx2(h.y, p->y);
+  mpi29_copy_avx2(h.z, p->z);
+  // compute 2P
+  ted_dbl(&h, &h);
+  ProPoint p_dbl;
+  ted_copy_ext_to_pro(&p_dbl, &h);
+
+  // compute table[0, P, 3P, 5P, ... , 15P] 9 points in total
+  // 0
+  ted_pro_initialize(&t[0]);
+  // P
+  mpi29_copy_avx2(t[1].x, p->x);
+  mpi29_copy_avx2(t[1].y, p->y);
+  mpi29_copy_avx2(t[1].z, p->z);
+  // 3P
+  ted_pro_add(&t[2], &t[1], &p_dbl);
+  // 5P
+  ted_pro_add(&t[3], &t[2], &p_dbl);
+  // 7P
+  ted_pro_add(&t[4], &t[3], &p_dbl);
+  // 9P
+  ted_pro_add(&t[5], &t[4], &p_dbl);
+  // 11P
+  ted_pro_add(&t[6], &t[5], &p_dbl);
+  // 13P
+  ted_pro_add(&t[7], &t[6], &p_dbl);
+  // 15P
+  ted_pro_add(&t[8], &t[7], &p_dbl);
+}
+
+
+// compute duif table for variable point P at run time, w = 5
+void compute_duiftable_A(ProPoint *table, ProPoint *p)
+{
+  __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS];
+  uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
+  __m256i half_vec[NWORDS], d_vec[NWORDS], zero_vec[NWORDS];
+  // const __m256i zero = VZERO;
+  uint32_t zero[NWORDS] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+  int i;
+  for (i = 0; i < NWORDS; i++) half_vec[i] = VSET164(half[i]);
+  for (i = 0; i < NWORDS; i++) d_vec[i] = VSET164(d[i]);
+  for (i = 0; i < NWORDS; i++) zero_vec[i] = VSET164(zero[i]);
+  AffPoint h;
+  mpi29_gfp_mul_avx2(t1, p[0].z, p[1].z);
+
+  for (i = 2; i < 8; i++) mpi29_gfp_mul_avx2(t1, t1, p[i].z); // t1 = z0z1z2z3z4z5z6z7
+
+  mpi29_gfp_inv_avx2(t1, t1);
+
+  // Table[0] 0P
+  mpi29_copy_avx2(table[0].x, half_vec);
+  mpi29_copy_avx2(table[0].y, half_vec);
+  mpi29_copy_avx2(table[0].z, zero_vec);
+
+  // Table[1] P
+  mpi29_gfp_mul_avx2(t2, t1, p[1].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[2].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[3].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[4].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[5].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[6].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[7].z); // t2 = 1/z0
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[0].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[0].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[1].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[1].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[1].z, t2, d_vec);
+
+  // Table[2] 3P
+  mpi29_gfp_mul_avx2(t2, t1, p[0].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[2].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[3].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[4].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[5].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[6].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[7].z); // t2 = 1/z1
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[1].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[1].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[2].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[2].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[2].z, t2, d_vec);
+
+  // Table[3] 5P
+  mpi29_gfp_mul_avx2(t2, t1, p[0].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[1].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[3].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[4].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[5].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[6].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[7].z); // t2 = 1/z2
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[2].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[2].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[3].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[3].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[3].z, t2, d_vec);
+
+  // Table[4] 7P
+  mpi29_gfp_mul_avx2(t2, t1, p[0].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[1].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[2].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[4].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[5].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[6].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[7].z); // t2 = 1/z3
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[3].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[3].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[4].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[4].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[4].z, t2, d_vec);
+
+  // Table[5] 9P
+  mpi29_gfp_mul_avx2(t2, t1, p[0].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[1].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[2].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[3].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[5].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[6].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[7].z); // t2 = 1/z4
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[4].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[4].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[5].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[5].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[5].z, t2, d_vec);
+
+  // Table[6] 11P
+  mpi29_gfp_mul_avx2(t2, t1, p[0].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[1].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[2].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[3].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[4].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[6].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[7].z); // t2 = 1/z5
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[5].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[5].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[6].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[6].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[6].z, t2, d_vec);
+
+// Table[7] 13P
+  mpi29_gfp_mul_avx2(t2, t1, p[0].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[1].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[2].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[3].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[4].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[5].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[7].z); // t2 = 1/z6
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[6].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[6].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[7].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[7].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[7].z, t2, d_vec);
+
+// Table[8] 15P
+  mpi29_gfp_mul_avx2(t2, t1, p[0].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[1].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[2].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[3].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[4].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[5].z);
+  mpi29_gfp_mul_avx2(t2, t2, p[6].z); // t2 = 1/z7
+
+  mpi29_gfp_mul_avx2(h.x, t2, p[7].x);
+  mpi29_gfp_mul_avx2(h.y, t2, p[7].y);
+
+  mpi29_gfp_add_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[8].x, t2, half_vec);
+  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
+  mpi29_gfp_mul_avx2(table[8].y, t2, half_vec);
+  mpi29_gfp_mul_avx2(t2, h.x, h.y);
+  mpi29_gfp_mul_avx2(table[8].z, t2, d_vec);
+}
+
+static const DuifPoint precomp_B[33];
+
+void table_query_wB(ProPoint *r, __m256i b)
+{
+  const __m256i babs = VABS32(b);
+  const __m256i one = VSET164(1);
+  const __m256i zero = VZERO;
+
+
+
+  __m256i xP[4], yP[4], zP[4];  
+  __m256i t[NWORDS];
+  __m256i temp, bsign, bmask;
+  uint64_t xcoor, ycoor, zcoor;
+  int i, j;
+  uint32_t index0, index1, index2, index3;
+  index0 = (VEXTR32(babs, 0) + 1) / 2;
+  index1 = (VEXTR32(babs, 2) + 1) / 2;
+  index2 = (VEXTR32(babs, 4) + 1) / 2;
+  index3 = (VEXTR32(babs, 6) + 1) / 2;
+
+  // table query
+  for (i = 0; i < 4; i++)
+  {
+    load_vector(&xP[i], precomp_B[index0].x[i], precomp_B[index1].x[i], precomp_B[index2].x[i], precomp_B[index3].x[i]);
+    load_vector(&yP[i], precomp_B[index0].y[i], precomp_B[index1].y[i], precomp_B[index2].y[i], precomp_B[index3].y[i]);
+    load_vector(&zP[i], precomp_B[index0].z[i], precomp_B[index1].z[i], precomp_B[index2].z[i], precomp_B[index3].z[i]);
+  }
+  // if b<0, bsign = 1, bmask is all 1; if b>0, bsign = 0, bmask is all 0.
+  bsign = VSHR(b, 31);
+  bmask = VSUB(zero, bsign);
+  // conditional negation
+  for (i = 0; i < 4; i++)
+  {
+    temp = VAND(VXOR(xP[i], yP[i]), bmask);
+    xP[i] = VXOR(xP[i],temp);
+    yP[i] = VXOR(yP[i], temp);
+  }
+  conv_coor_to_29(r->x, xP);
+  conv_coor_to_29(r->y, yP);
+  conv_coor_to_29(r->z, zP);
+
+  mpi29_copy_avx2(t, r->z);
+  __m256i swap[NWORDS];
+  for (i = 0; i < NWORDS; i++) swap[i] = zero;
+  mpi29_gfp_sub_avx2(t, swap, t);
+  mpi29_cswap_avx2(r->z, t, bsign);
+}
+
+void table_query_wA(ProPoint *r, ProPoint *table, __m256i b)
+{
+  const __m256i babs = VABS32(b);
+  const __m256i one = VSET164(1);
+  const __m256i zero = VZERO;
+  __m256i index, temp;
+  uint32_t xcoor0[NWORDS], ycoor0[NWORDS], zcoor0[NWORDS];
+  uint32_t xcoor1[NWORDS], ycoor1[NWORDS], zcoor1[NWORDS];
+  uint32_t xcoor2[NWORDS], ycoor2[NWORDS], zcoor2[NWORDS];
+  uint32_t xcoor3[NWORDS], ycoor3[NWORDS], zcoor3[NWORDS];
+  __m256i xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS];
+  int i, j;
+
+  uint32_t index0, index1, index2, index3;
+  index0 = (VEXTR32(babs, 0) + 1) / 2;
+  index1 = (VEXTR32(babs, 2) + 1) / 2;
+  index2 = (VEXTR32(babs, 4) + 1) / 2;
+  index3 = (VEXTR32(babs, 6) + 1) / 2;
+
+  get_channel(xcoor0, table[index0].x, NWORDS, 0); get_channel(ycoor0, table[index0].y, NWORDS, 0); get_channel(zcoor0, table[index0].z, NWORDS, 0);
+  get_channel(xcoor1, table[index1].x, NWORDS, 2); get_channel(ycoor1, table[index1].y, NWORDS, 2); get_channel(zcoor1, table[index1].z, NWORDS, 2);
+  get_channel(xcoor2, table[index2].x, NWORDS, 4); get_channel(ycoor2, table[index2].y, NWORDS, 4); get_channel(zcoor2, table[index2].z, NWORDS, 4);
+  get_channel(xcoor3, table[index3].x, NWORDS, 6); get_channel(ycoor3, table[index3].y, NWORDS, 6); get_channel(zcoor3, table[index3].z, NWORDS, 6);
+
+  for (i = 0; i < NWORDS; i++)
+  {
+    xP[i] = VSET64(xcoor3[i], xcoor2[i], xcoor1[i], xcoor0[i]);
+    yP[i] = VSET64(ycoor3[i], ycoor2[i], ycoor1[i], ycoor0[i]);
+    zP[i] = VSET64(zcoor3[i], zcoor2[i], zcoor1[i], zcoor0[i]);
+  }
+  __m256i bsign, bmask;
+  bsign = VSHR(b, 31);
+  bmask = VSUB(zero, bsign);
+
+  // conditional negation
+  for (i = 0; i < NWORDS; i++)
+  {
+      temp = VAND(VXOR(xP[i], yP[i]), bmask);
+      xP[i] = VXOR(xP[i],temp);
+      yP[i] = VXOR(yP[i], temp);
+  }
+
+  mpi29_copy_avx2(r->x, xP);
+  mpi29_copy_avx2(r->y, yP);
+  mpi29_copy_avx2(r->z, zP);
+
+  mpi29_copy_avx2(t, r->z);
+  mpi29_gfp_neg_avx2(t);
+  mpi29_cswap_avx2(r->z, t, bsign);
+
+}
+
+void table_query_wA_v2(ProPoint *r, ProPoint *table, __m256i b)
+{
+  const __m256i babs = VABS32(b);
+  const __m256i one = VSET164(1);
+  const __m256i zero = VZERO;
+  __m256i index, temp[NWORDS];
+  uint32_t xcoor0[NWORDS], ycoor0[NWORDS], zcoor0[NWORDS];
+  uint32_t xcoor1[NWORDS], ycoor1[NWORDS], zcoor1[NWORDS];
+  uint32_t xcoor2[NWORDS], ycoor2[NWORDS], zcoor2[NWORDS];
+  uint32_t xcoor3[NWORDS], ycoor3[NWORDS], zcoor3[NWORDS];
+  __m256i xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS];
+  int i, j;
+
+  uint32_t index0, index1, index2, index3;
+  index0 = (VEXTR32(babs, 0) + 1) / 2;
+  index1 = (VEXTR32(babs, 2) + 1) / 2;
+  index2 = (VEXTR32(babs, 4) + 1) / 2;
+  index3 = (VEXTR32(babs, 6) + 1) / 2;
+
+  get_channel(xcoor0, table[index0].x, NWORDS, 0); get_channel(ycoor0, table[index0].y, NWORDS, 0); get_channel(zcoor0, table[index0].z, NWORDS, 0);
+  get_channel(xcoor1, table[index1].x, NWORDS, 2); get_channel(ycoor1, table[index1].y, NWORDS, 2); get_channel(zcoor1, table[index1].z, NWORDS, 2);
+  get_channel(xcoor2, table[index2].x, NWORDS, 4); get_channel(ycoor2, table[index2].y, NWORDS, 4); get_channel(zcoor2, table[index2].z, NWORDS, 4);
+  get_channel(xcoor3, table[index3].x, NWORDS, 6); get_channel(ycoor3, table[index3].y, NWORDS, 6); get_channel(zcoor3, table[index3].z, NWORDS, 6);
+
+  for (i = 0; i < NWORDS; i++)
+  {
+    xP[i] = VSET64(xcoor3[i], xcoor2[i], xcoor1[i], xcoor0[i]);
+    yP[i] = VSET64(ycoor3[i], ycoor2[i], ycoor1[i], ycoor0[i]);
+    zP[i] = VSET64(zcoor3[i], zcoor2[i], zcoor1[i], zcoor0[i]);
+  }
+  __m256i bsign;
+  bsign = VSHR(b, 31);
+
+  mpi29_copy_avx2(r->x, xP);
+  mpi29_copy_avx2(r->y, yP);
+  mpi29_copy_avx2(r->z, zP);
+  // conditional negation
+  mpi29_copy_avx2(temp, xP);
+  mpi29_gfp_neg_avx2(temp);
+  mpi29_cswap_avx2(r->x, temp, bsign);
+}
+
 
 void jsf_query(ProPoint *r, ProPoint *table, const __m256i d)
 {
@@ -843,10 +1254,10 @@ void jsf_query_v2(ProPoint *r, ProPoint *table, const __m256i d)
   index2 = get_lane(&dabs, 4);
   index3 = get_lane(&dabs, 6);
 
-  get_channel(xcoor0, table[index0].x, 0); get_channel(ycoor0, table[index0].y, 0); get_channel(zcoor0, table[index0].z, 0);
-  get_channel(xcoor1, table[index1].x, 2); get_channel(ycoor1, table[index1].y, 2); get_channel(zcoor1, table[index1].z, 2);
-  get_channel(xcoor2, table[index2].x, 4); get_channel(ycoor2, table[index2].y, 4); get_channel(zcoor2, table[index2].z, 4);
-  get_channel(xcoor3, table[index3].x, 6); get_channel(ycoor3, table[index3].y, 6); get_channel(zcoor3, table[index3].z, 6);
+  get_channel(xcoor0, table[index0].x, NWORDS, 0); get_channel(ycoor0, table[index0].y, NWORDS, 0); get_channel(zcoor0, table[index0].z, NWORDS, 0);
+  get_channel(xcoor1, table[index1].x, NWORDS, 2); get_channel(ycoor1, table[index1].y, NWORDS, 2); get_channel(zcoor1, table[index1].z, NWORDS, 2);
+  get_channel(xcoor2, table[index2].x, NWORDS, 4); get_channel(ycoor2, table[index2].y, NWORDS, 4); get_channel(zcoor2, table[index2].z, NWORDS, 4);
+  get_channel(xcoor3, table[index3].x, NWORDS, 6); get_channel(ycoor3, table[index3].y, NWORDS, 6); get_channel(zcoor3, table[index3].z, NWORDS, 6);
 
   for (i = 0; i < NWORDS; i++)
   {
@@ -914,7 +1325,6 @@ void ted_sim_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
   compute_proT(t, p);
   compute_duifT_v2(lut, t);
   
-  uint32_t r_x[NWORDS];
   //table query
   ted_ext_initialize(&h);
   for (i = 255; i >=0; i--)
@@ -987,6 +1397,313 @@ void ted_sim_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const
   mpi29_copy_avx2(r->z, h.z);
 
 }
+
+
+void ted_naf_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
+{
+  ExtPoint h;
+  NAFResult_avx2 n;
+  __m256i sp[8], kp[8];
+  int max_len, i;
+  const __m256i t0 = VSET164(0xFFFFFFF8U);
+  const __m256i t1 = VSET164(0x7FFFFFFFU);
+  const __m256i t2 = VSET164(0x40000000U);
+  for (i = 0; i < 8; i++)
+  {
+    sp[i] = s[i];
+    kp[i] = k[i];
+  }
+  // prune the scalar
+  kp[0] = VAND(kp[0], t0); kp[7] = VAND(kp[7], t1); kp[7] = VOR(kp[7], t2);
+  sp[0] = VAND(sp[0], t0); sp[7] = VAND(sp[7], t1); sp[7] = VOR(sp[7], t2);
+
+  NAF_conv(&n, sp, kp);
+
+  // compute table for variable point 
+  ProPoint t[8], lut[9];
+  ProPoint a;
+  mpi29_copy_avx2(a.x, p->x);
+  mpi29_copy_avx2(a.y, p->y);
+  mpi29_copy_avx2(a.z, p->z);
+  // point negation
+  mpi29_gfp_neg_avx2(a.x);
+
+  compute_table_A(t, &a);
+  compute_duiftable_A(lut, t);
+
+  // table query
+  ted_ext_initialize(&h);
+  max_len = n.max_length;
+  for (i = max_len-1; i >= 0; i--)
+  {
+    ted_dbl(&h, &h);
+    table_query_wB(r, n.k0[i]);
+    ted_add(&h, &h, r);
+    table_query_wA(r, lut, n.k1[i]);
+    ted_add(&h, &h, r);
+  }
+  mpi29_copy_avx2(r->x, h.x);
+  mpi29_copy_avx2(r->y, h.y);
+  mpi29_copy_avx2(r->z, h.z);
+}
+/*
+void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
+{
+  ExtPoint h;
+  NAFResult_avx2 n;
+  __m256i sp[8], kp[8];
+  int max_len, i;
+  const __m256i t0 = VSET164(0xFFFFFFF8U);
+  const __m256i t1 = VSET164(0x7FFFFFFFU);
+  const __m256i t2 = VSET164(0x40000000U);
+  for (i = 0; i < 8; i++)
+  {
+    sp[i] = s[i];
+    kp[i] = k[i];
+  }
+  // prune the scalar
+  kp[0] = VAND(kp[0], t0); kp[7] = VAND(kp[7], t1); kp[7] = VOR(kp[7], t2);
+  sp[0] = VAND(sp[0], t0); sp[7] = VAND(sp[7], t1); sp[7] = VOR(sp[7], t2);
+
+  NAF_conv(&n, sp, kp);
+
+  // compute table for variable point 
+  ProPoint lut[9];
+  ProPoint a;
+  mpi29_copy_avx2(a.x, p->x);
+  mpi29_copy_avx2(a.y, p->y);
+  mpi29_copy_avx2(a.z, p->z);
+  // point negation
+  mpi29_gfp_neg_avx2(a.x);
+
+  compute_table_A_v2(lut, &a);
+
+  ProPoint t;
+  // table query
+  ted_pro_initialize(&t);
+  ted_ext_initialize(&h);
+  max_len = n.max_length;
+  for (i = max_len-1; i >= 0; i--)
+  {
+    ted_dbl(&h, &h);
+    table_query_wB(r, n.k0[i]);
+    ted_add(&h, &h, r);
+    // ted_copy_ext_to_pro(&t1, &h);
+    table_query_wA_v2(r, lut, n.k1[i]);
+    ted_pro_add(&t, &t, r);
+    // ted_copy_pro_to_ext(&h, &t1);
+    // ted_add(&h, &h, r);
+  }
+  mpi29_copy_avx2(r->x, h.x);
+  mpi29_copy_avx2(r->y, h.y);
+  mpi29_copy_avx2(r->z, h.z);
+}
+*/
+
+
+// precomp_table for base point, w=7
+
+static const DuifPoint precomp_B[33] = 
+{
+    // 0B
+    {
+    { 0xFFFFFFFFFFFFFFF7, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x3FFFFFFFFFFFFFFF },
+    { 0xFFFFFFFFFFFFFFF7, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x3FFFFFFFFFFFFFFF },
+    { 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000 },
+    },
+    // 1B
+    {
+    { 0x97DE49E37AC61DB9, 0x67C996E37DC6070C, 0x9385A44C321EA161, 0x43E7CE9D19EA5D32 },
+    { 0xCE881C82EBA0489F, 0xFE9CCF82E8A05F59, 0xD2E0C21A3447C504, 0x227E97C94C7C0933 },
+    { 0x55E48902C3BD5534, 0x136CF411E655624F, 0x2D0DBEE5EEA1ACC6, 0x3788BDB44F8632D4 },
+    },
+    // 3B
+    {
+    { 0x5792D85426774B98, 0x012D4218744325C5, 0x608DA8014F80B399, 0x3D0B270DCD407C7A },
+    { 0xAB308FF4527E6929, 0x9DE9A9FEF2E0DD3E, 0x4098F98D10A5EB5E, 0x555C8AC3AAADED31 },
+    { 0x0A57499F86E86C3B, 0x2C4A11910E1AED31, 0x68B872A2C6796DA6, 0x6D141357895CDA63 },
+    },
+    // 5B
+    {
+    { 0x51095E220452DD90, 0x46A82461E3AF7681, 0xEE8DF5862D5FF622, 0x54A2E678A3710375 },
+    { 0xBFC8C161D223EB5D, 0xEA800A68A59394DB, 0xF19E788E5C325043, 0x0AA53F39F58DAAF9 },
+    { 0x5E5DEDF8C0954139, 0x93870403E85EE8FE, 0x5A0DB3858DDED396, 0x61D55F34B59DDB4D },
+    },
+    // 7B
+    {
+    { 0x358D2E684A2751D6, 0xBA381A9D59CEE069, 0x38D92941142A1724, 0x630DF534941E493F },
+    { 0xDD37964D551910CF, 0x365010A99DDD11D3, 0x4EF53B27C90C961D, 0x4EB76EAE97298BF0 },
+    { 0x78C1B6E400DC59D1, 0xD981AFA3829F524D, 0xA94E20DD2C3BD6F9, 0x3D4FDD8E3507C853 },
+    },
+    // 9B
+    {
+    { 0xCD9733C55354318E, 0x3284F37A8DE2362C, 0xE75919E4E3437ADA, 0x5A5CF699C56EBFAC },
+    { 0xF9B710BF01CEC032, 0x4C5040DB7A9020CD, 0xCB65E30473AF5822, 0x24E02D28FD6E4E47 },
+    { 0x835A745FC822D784, 0x717FC1F4538CE917, 0x557B7E14C9EA678B, 0x79E0B9010D804583 },
+    },
+    // 11B
+    {
+    { 0x97DF80424540156F, 0x72ECFF6781181713, 0x889F42388BB81A03, 0x213AD5712A36C7D7 },
+    { 0x98AFAD8124C321A4, 0x9F6B59B4BB8441C0, 0xD1D03AAAB546F5CA, 0x0C55ACC014EAE3BF },
+    { 0x6C159662FEB044EB, 0x018F5A5099417252, 0x221888CCDA8D4311, 0x5EE32A915A9EFCA4 },
+    },
+    // 13B
+    {
+    { 0xDFB8611151003FAD, 0xDFC259CD5ADE6F6D, 0xA9BD07097D83DD03, 0x51A7EBF761A37920 },
+    { 0xA837809D993FDFC0, 0x577E75E4CDBBB7B5, 0xCE8959195556ACB4, 0x4133C4168BB01253 },
+    { 0xA9B0508CB99751BC, 0x921BF358EFC6EA38, 0xD1779BFC48D3F299, 0x24BDD37ED504BC31 },
+    },
+    // 15B
+    {
+    { 0x9267660189E7F550, 0x432461468C4E1236, 0x96DEDEFD60F96A68, 0x30F1148BF896F395 },
+    { 0x0205E6C32346677C, 0x69C14DD2154C886B, 0xBA84180403D928C9, 0x61DAE6A10C682F5F },
+    { 0x72ECD3B17CDE85A8, 0x759C57A71B9FEF77, 0x01972D3EC9EB2138, 0x288EB09085726C21 },
+    },
+    // 17B
+    {
+    { 0xC9633B77CA874EB7, 0x52A31066E06B8227, 0xD54D9B3237C78924, 0x76992C926EDC2AF1 },
+    { 0x0409C32422106F3A, 0xC50E780B5AC976DA, 0x1CFD271394CA1692, 0x78D3FF37F1241408 },
+    { 0xB638C15C52E4642A, 0x19FE8A3CFF2F9501, 0xB967AC8C41BBC686, 0x23A3625B2ACF7554 },
+    },
+    // 19B
+    {
+    { 0xE9BBBD9E36E34D0C, 0xEF7D5913B7C4FB0B, 0xA2B28E7BDA9D0B5A, 0x6E4D28EF1A7F4FDB },
+    { 0x9A42A364323A089A, 0x3E9AD76E877E6424, 0x7FC9CD3B03395199, 0x50CB31A4BEDAF36B },
+    { 0xFA8878E7BCF8872A, 0xFFEEEED50F32C28A, 0x84E1D38B880A113B, 0x6402281E304111DD },
+    },
+    // 21B
+    {
+    { 0xE2124F681651BFDA, 0xD02CD071D30AD655, 0xC454B76BE4B70711, 0x6A99CC528B2834B6 },
+    { 0x1DB410E91D1B68B1, 0xDDDA0553F4CDCF19, 0x2ECF2E721041C523, 0x7B8F04C42C6F262F },
+    { 0xCD097AE93C228F66, 0x1D6D2EBCC2C4CE65, 0xA3BFA516CFD2CA84, 0x6D2F68EB47FAD308 },
+    },
+    // 23B
+    {
+    { 0x08CA89157F0A8738, 0x67904D12BF259AEC, 0x39C3FC148F388F10, 0x62565C4BEC5FC978 },
+    { 0x5D72F062AC2939A3, 0x9C972E0CE56DCEBF, 0x14329E0F6D0E55F4, 0x40CDB009AFF7EE22 },
+    { 0x0F30340A2F09A5B8, 0xE27AF3279218260B, 0x283744547E0D1F6B, 0x4A8624FEF35697C9 },
+    },
+    // 25B
+    {
+    { 0xC73DF94A84A3889C, 0xAEB7F79CA7BAD328, 0x0857BCE212D38456, 0x3595AD03ADDCCC91 },
+    { 0x5C24C31E4E6E5434, 0xE41FA26DDC38A568, 0xFF1F71AB061B0B46, 0x3C536BBC8F02FDE0 },
+    { 0xAC5FB825A3D05CBB, 0x5300D9AABA0BA46A, 0x55158FD8EAA17AC8, 0x392E3FFE256AAE80 },
+    },
+    // 27B
+    {
+    { 0x7221338AE8E7CCD9, 0xB9A96A888151069A, 0x91E88ABDC589084F, 0x3CA66493BE58F9D1 },
+    { 0x48C015FB8E684C60, 0x7F20B65276AF31B3, 0xEFAC2EB8A4814CA6, 0x266AA312FC2AFD73 },
+    { 0x257B621361562820, 0xDE4D76D6997B392C, 0x9568197885188810, 0x78041ABDB7E64742 },
+    },
+    // 29B
+    {
+    { 0x85C433939C3B9F77, 0x5C66647D4AFDE67D, 0x4696EAD1DCD694DB, 0x4377BF4C28D687B5 },
+    { 0xE80DCFDDC12C251A, 0x23D5B231E95A3C95, 0x5B18B1CE2429B101, 0x09D4951B34EB6A14 },
+    { 0x6549BB8E602BBEE9, 0xBAA0720F281AEE2E, 0x12340780EC017038, 0x5E14B6EFC5157C35 },
+    },
+    // 31B
+    {
+    { 0x57568AFCEC8A5380, 0x5497BDFCC647FC89, 0x57FC118BCFA9EB98, 0x7D4CE9C9A4863BDD },
+    { 0xFE75A6975D8F9297, 0xDC4A8863A056DC8F, 0xFE38D1BEE850D682, 0x4544963803A3B8BD },
+    { 0x47A976921B5ED1F4, 0x3BD46420ABF403CA, 0x52D4B2B19317CE70, 0x1433B16941817BE9 },
+    },
+    // 33B
+    {
+    { 0xA73C1B049E71AD89, 0xC1708C0ED935D54B, 0x0660C969E5E3DC1F, 0x5978ED02354ECE9D },
+    { 0xBE2AC715E7177AD5, 0x724C365A33A3DE31, 0x0AA50BCF9DDDC4DC, 0x7B437951EB78BB3D },
+    { 0xD546895336ACBE35, 0x4788C9818269C295, 0x1FC8EE39E104D811, 0x2B0982FC54D69453 },
+    },
+    // 35B
+    {
+    { 0x88064BC6F649575F, 0x6521EAA1A6B6B9F2, 0x41898D916C23DD24, 0x40557629F1AEA696 },
+    { 0xB391661473D86061, 0xB84EF4DDED83AE29, 0x657B46D3EB808530, 0x41850D77962BE636 },
+    { 0x3DD8FBB9801D6955, 0x059F94C01590B304, 0x3C10EE432907691F, 0x105F4E0E12032A40 },
+    },
+    // 37B
+    {
+    { 0xF0A9C3EC124B39D3, 0xACA1DE16FAA37249, 0x0E3FCD40E1B7B1DA, 0x3A85599B0F8560EF },
+    { 0x1070722571012F30, 0x581D9D97E5EE5C9C, 0x882EB1CE7CAD068E, 0x34BB262A2833F188 },
+    { 0x8F451941D17C0812, 0xB7976D11DEBFE5F8, 0x5B97E8ADD61712B1, 0x6A7CB59FDB83A820 },
+    },
+    // 39B
+    {
+    { 0x07D6F90214B34933, 0x9D6ED1023EBEB925, 0x379ECA41462BB078, 0x5EBFF4E295DBA9CF },
+    { 0x8BBED7E30B588F5D, 0xC4BB25CE7D2BB23C, 0x5BD45088737673C2, 0x7C7341CFDF42EDF8 },
+    { 0x381996FB9BDC42AC, 0x3AE82EA1820D0BC5, 0x1907FBA55072CF11, 0x78793479A8044121 },
+    },
+    // 41B
+    {
+    { 0xB34322C1D8C02F9A, 0x7A9AE2E8B06EBE0C, 0xF4C3A75B8F265803, 0x7E069A2E7D6C44EC },
+    { 0x91920890386E79A1, 0x1C0664BF73FE708B, 0xD98EEF769AA95B4C, 0x60272B601CDC625C },
+    { 0xAC8F8FA5C63C19C5, 0x501B3558B3F05AF0, 0xAE5E20A95A2F9EA2, 0x106BAA3B155763BB },
+    },
+    // 43B
+    {
+    { 0x2F47E1B7E39DDBAC, 0x5672A1D29B1E5DCD, 0x54C9A53EC81DE491, 0x15C78F2379E77631 },
+    { 0x4EBA7F589ADCFA98, 0xC259BEF8EF464AB6, 0xF4991583AB89C5D4, 0x5C5C56D43C85A670 },
+    { 0x5AE0254E6FA8FCA5, 0x159CA957658FEF56, 0x8E8836C59945B36D, 0x424D7599675D0CA9 },
+    },
+    // 45B
+    {
+    { 0xD5283E85BAFE3C8F, 0x07F7C925BD3392E9, 0x0EC12A159CB59C98, 0x7CAF70BA987B3A7E },
+    { 0x6BBB3E9E31EE7F3F, 0x904E2CA44BC2B720, 0x5B33B430F0A7BE09, 0x28E332F0646B12FE },
+    { 0x92A52D8529765EB7, 0xAEA08FB7701A57F3, 0xF3512686E5772518, 0x7668CDFA4EE2A23B },
+    },
+    // 47B
+    {
+    { 0x0FFF3090B2D7E1C3, 0x041515445C6A8D88, 0xBB7B313F104C85D5, 0x2F00D9D3A14F21F3 },
+    { 0xBF43B0C8290BCE48, 0x2B8E850305964FC2, 0x40515D54424CB88F, 0x7A9079EDA059731C },
+    { 0x9EDA85F1E9C9ABC7, 0x4B3DB66EACCF4A52, 0x0D184D326F988F37, 0x7884964E6779E4C3 },
+    },
+    // 49B
+    {
+    { 0x42B5EC563A028EDE, 0x81FB52042ADBD50F, 0x1D2573E5E4BA1E75, 0x60B9D2DDB89BD5EF },
+    { 0x29EC291F81B248C6, 0x515A027A1FD5B58E, 0x8405A54F3340F2D2, 0x0750AD81E812BDD3 },
+    { 0x0BE2B718F87C90C5, 0x2D34B7158D7E2384, 0xFBC98B347A5978BB, 0x2FE2B2B0A5271D33 },
+    },
+    // 51B
+    {
+    { 0x244970F33BC84C47, 0x80EACA878E2E6B91, 0xF1D840CD72C91F76, 0x190A63A04EA3328D },
+    { 0x89B72B86E236BD69, 0x07E855662A7C6E47, 0xACAA4F819886D6C3, 0x71388E20A622A550 },
+    { 0xB0994C13A03328BB, 0x1DD250334513CA1B, 0x6CDB5C760C2E911E, 0x2DF54A039F65C19E },
+    },
+    // 53B
+    {
+    { 0xDA386731F9A1E97C, 0x8033DD4782A1F478, 0x9AED28D0D108BDB7, 0x25683C2CA278DE97 },
+    { 0x320EDF8489644DF2, 0xD679C598BEB72BCE, 0x55FF4F017B4BD832, 0x1D566AE0A47B0F76 },
+    { 0x42C71D9A6198C177, 0x6E4CE0238398B413, 0x9A042D9769CED446, 0x5D7F8658EC81429E },
+    },
+    // 55B
+    {
+      { 0xC9132185FA629A79, 0x34724E09930F9141, 0x84F799BC47E993E3, 0x5667CFB995ECCF3F },
+    { 0xC3E2E3F59D10202F, 0xC77188F7F6D6AB64, 0x949297245694EAFC, 0x08873F437A66928E },
+    { 0x2BE06C4F6B01FAF2, 0x8944431478581006, 0xA98B9384D0171DDB, 0x02E2ABF05CB49D1B },
+    },
+    // 57B
+    {
+    { 0x7BBB5DD844E10758, 0xB0FC2DFB7D07EC2E, 0xDB5C9FA731A210FD, 0x144FF78420C30902 },
+    { 0x6C7CE7188FE4BF2E, 0xBD1F931808FCFED7, 0x70ADBF5045F692EE, 0x770AA60BC7F4C3AD },
+    { 0xE7B0B19B7F6B4D56, 0xCD8B7273C19AE4A7, 0x89BC4BB2BA9D3FF3, 0x757DFB2154AE518C },
+    },
+    // 59B
+    {
+    { 0xAEF2A8387C89D466, 0xBE8E8B3D95867AB0, 0xED14AB5B48756A44, 0x096049E76DC00F6C },
+    { 0x3ED46F06317AE957, 0x4C7E1ED258073DCD, 0x3EF5B56D06D6B870, 0x46DA5C28DCA81C62 },
+    { 0x87E0A3FC9845C0C7, 0x834B4ED0508D7188, 0x6773AAB96D63EBFE, 0x59D543CCE331AE73 },
+    },
+    // 61B
+    {
+    { 0xC1A47AC47E0AB64F, 0x36D15D4D8D053693, 0x711316AE43E52D5B, 0x50966860E46AC4D3 },
+    { 0xD787FA8F5E842E79, 0x3C7A8D44B3E99F8F, 0x37615FF0A830019E, 0x119E3794F4710D43 },
+    { 0x697A6A883F8C63B7, 0x891766F9293F4E94, 0xD38543151E9E99A0, 0x4EDBBBC488C8A671 },
+    },
+    // 63B
+    {
+    { 0xD99CA3B4EEB80D5B, 0x715C6F6A0CE7C6D2, 0x0AEFA0B0FE956429, 0x3D71654500BE925F },
+    { 0xEEF9A91CBE35E12E, 0x3D4BF16629EA8089, 0x3E3A7A1D5FBCD198, 0x58D6CBD6937156FE },
+    { 0xDBF40BF684905CB1, 0x0F428C661F8CED4E, 0xF248E0A792AB0532, 0x0F68FE29D3311641 },
+    },
+};
 
 // lookup table
 // base[i][j] = (j+1) * (256^i)

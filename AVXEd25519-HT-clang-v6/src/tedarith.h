@@ -38,6 +38,8 @@ void ted_sep_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
 void ted_mul_fixbase_v2(ProPoint *r, const __m256i *k);
 void ted_sim_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
 void ted_sim_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
+void ted_naf_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
+// void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
 // ------------------------------------ // 
 // void ted_conv_scalar_to_nibble(__m256i *e, __m256i *k);
 // void conv_coor_to_29(__m256i *r, __m256i *a);
@@ -47,10 +49,17 @@ void ted_pro_to_aff(AffPoint *r, ProPoint *p);
 // void conv_ted_to_mon(ProPoint *r, ProPoint *p);
 // void conv_mon_to_ted(ProPoint *r, ProPoint *p);
 // void point_recovery(ProPoint *r, AffPoint *h, ProPoint *q1, ProPoint *q2);
-
+void ted_copy_ext_to_pro(ProPoint *r, ExtPoint *p);
 void compute_proT(ProPoint *t, ProPoint *a);
 void ted_Z1_add(ProPoint *r, ProPoint *a, ProPoint *b);
 void compute_duifT(ProPoint *table, ProPoint *a);
 void compute_duifT_v2(ProPoint *table, ProPoint *a);
+
+void compute_table_A(ProPoint *t, ProPoint *p);
+// void compute_table_A_v2(ProPoint *t, ProPoint *p);
+void compute_duiftable_A(ProPoint *table, ProPoint *p);
+void table_query_wA(ProPoint *r, ProPoint *table, __m256i b);
+// void table_query_wA_v2(ProPoint *r, ProPoint *table, __m256i b);
+void table_query_wB(ProPoint *r, __m256i b);
 
 #endif

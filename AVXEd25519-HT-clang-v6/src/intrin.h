@@ -26,6 +26,7 @@
 #define VMUL(X, Y)         _mm256_mul_epu32(X, Y)
 #define VMAC(Z, X, Y)      VADD(Z, VMUL(X, Y))
 #define VABS8(X)           _mm256_abs_epi8(X)
+#define VABS32(X)          _mm256_abs_epi32(X)
 // 4-way logical operations on packed 64-bit integers
 #define VXOR(X, Y)         _mm256_xor_si256(X, Y)
 #define VAND(X, Y)         _mm256_and_si256(X, Y)

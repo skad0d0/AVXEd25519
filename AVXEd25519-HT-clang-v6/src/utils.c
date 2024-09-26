@@ -143,11 +143,11 @@ void mpi29_print(const char *c, const uint32_t *a, int len)
   printf("%08X\n", a[0]);
 }
 
-void get_channel(uint32_t *r, const __m256i *a, const int ch)
+void get_channel(uint32_t *r, const __m256i *a, const int ch_length, const int ch)
 {
   int i;
 
-  for (i = 0; i < NWORDS; i++) r[i] = ((uint32_t*)&a[i])[ch];
+  for (i = 0; i < ch_length; i++) r[i] = ((uint32_t*)&a[i])[ch];
 }
 
 uint32_t get_lane(const __m256i *a, const int ch)

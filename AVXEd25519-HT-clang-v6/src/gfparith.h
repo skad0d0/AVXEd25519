@@ -17,6 +17,7 @@
 // least significant 29-bit word of p = 64*(2^255 - 19) = 2^261 - 1216
 #define LSWP29 0x1FFFFB40UL
 
+
 void mpi29_gfp_add_avx2(__m256i *r, const __m256i *a, const __m256i *b);
 void mpi29_gfp_sub_avx2(__m256i *r, const __m256i *a, const __m256i *b);
 void mpi29_gfp_sbc_avx2(__m256i *r, const __m256i *a, const __m256i *b);
