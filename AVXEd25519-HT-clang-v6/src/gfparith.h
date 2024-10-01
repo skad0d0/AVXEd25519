@@ -31,4 +31,5 @@ void mpi29_copy_avx2(__m256i *r, const __m256i *a);
 void mpi29_gfp_canonic_avx2(__m256i *a);
 void mpi29_ini_to_one_avx2(__m256i *r);
 void mpi29_ini_to_zero_avx2(__m256i *r);
+int is_all_zero(__m256i r);
 #endif

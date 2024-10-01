@@ -555,3 +555,9 @@ void mpi29_ini_to_zero_avx2(__m256i *r)
     r[8] = zero;
 
 }
+
+// if 4 number in vector r is all zero
+int is_all_zero(__m256i r)
+{
+    return _mm256_testz_si256(r, r);
+}

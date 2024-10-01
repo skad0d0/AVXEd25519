@@ -27,7 +27,7 @@ typedef struct duif_point
 
 void ted_add(ExtPoint *r, ExtPoint *p, ProPoint *q);
 void ted_pro_add(ProPoint *r, ProPoint *p, ProPoint*q);
-// void ted_dbl(ExtPoint *r, ExtPoint *p);
+void ted_dbl(ExtPoint *r, ExtPoint *p);
 // void ted_table_query(ProPoint *r, const int pos, __m256i b);
 // ----- core point multiplication ----- //
 void ted_mul_fixbase(ProPoint *r, const __m256i *k);
@@ -39,7 +39,7 @@ void ted_mul_fixbase_v2(ProPoint *r, const __m256i *k);
 void ted_sim_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
 void ted_sim_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
 void ted_naf_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
-// void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
+void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k);
 // ------------------------------------ // 
 // void ted_conv_scalar_to_nibble(__m256i *e, __m256i *k);
 // void conv_coor_to_29(__m256i *r, __m256i *a);
@@ -58,8 +58,9 @@ void compute_duifT_v2(ProPoint *table, ProPoint *a);
 void compute_table_A(ProPoint *t, ProPoint *p);
 // void compute_table_A_v2(ProPoint *t, ProPoint *p);
 void compute_duiftable_A(ProPoint *table, ProPoint *p);
+void ted_table_query_v2(ProPoint *r, const int pos, __m256i b);
+void jsf_query_v2(ProPoint *r, ProPoint *table, const __m256i d);
 void table_query_wA(ProPoint *r, ProPoint *table, __m256i b);
-// void table_query_wA_v2(ProPoint *r, ProPoint *table, __m256i b);
 void table_query_wB(ProPoint *r, __m256i b);
 
 #endif

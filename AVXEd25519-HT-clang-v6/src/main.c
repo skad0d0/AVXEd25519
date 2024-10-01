@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <stdlib.h>
 #include "gfparith.h"
@@ -72,7 +73,7 @@ void test_dsmul()
     mpi29_print("x4 = ", x_4, 8);
     
     // Simultaneous
-    ted_naf_double_scalar_mul(&r, &a, s1, s2);
+    ted_naf_double_scalar_mul_v2(&r, &a, s1, s2);
     ted_pro_to_aff(&h, &r);
     mpi29_gfp_canonic_avx2(h.x);
     for (i = 0; i < NWORDS; i++)
@@ -142,20 +143,20 @@ void timing_fp_arith()
     printf("* 4-Way ADD: %lld\n", diff_cycles);
 
     // load cache
-    for (i = 0; i < iterations; i++) mpi29_gfp_sbc_avx2(r, r, b);
+    for (i = 0; i < iterations; i++) mpi29_gfp_sub_avx2(r, r, b);
     // measure timing
     start_cycles = read_tsc();
     for (i = 0; i < iterations; i++) {
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
-        mpi29_gfp_sbc_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
+        mpi29_gfp_sub_avx2(r, r, b);
     }
     end_cycles = read_tsc();
     diff_cycles = (end_cycles-start_cycles)/(10*iterations);
@@ -215,6 +216,90 @@ void timing_fp_arith()
 
 }
 
+void timing_table_query()
+{
+    ProPoint p, q, h;
+    __m256i t[NWORDS], s[NWORDS];
+    int i, seed;
+
+    // initialize random generator
+    seed = (int) time(NULL);
+    srand(seed);
+    int pos = 1 + rand() % 31;
+    uint32_t index = 1 + rand()% 7;
+    __m256i b = VSET64(index, index, index, index);
+    // randomize the input
+    for (i = 0; i < NWORDS; i++) {
+        t[i]   = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        s[i]   = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        p.x[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        p.y[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        p.z[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        q.x[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        q.y[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        q.z[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        h.x[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        h.y[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        h.z[i] = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+    }
+    // benchmark part
+    unsigned long long start_cycles, end_cycles, diff_cycles;
+    int iterations = 10000;
+    puts("\nTable query:");
+    // load cache
+    for (i = 0; i < iterations; i++) ted_table_query_v2(&p, pos, b);
+    start_cycles = read_tsc();
+    for (i = 0; i < iterations; i++)
+    {
+        ted_table_query_v2(&p, pos, b);
+        p.x[2] = VXOR(p.z[2], p.y[2]);
+    }
+    end_cycles = read_tsc();
+    diff_cycles = ((end_cycles-start_cycles) - iterations )/(iterations);
+    printf("* Vectorized table query in sep method: %lld\n", diff_cycles);
+
+    // load cache
+    for (i = 0; i < iterations; i++) jsf_query_v2(&p, &q, b);
+    start_cycles = read_tsc();
+    for (i = 0; i < iterations; i++)
+    {
+        jsf_query_v2(&p, &q, b);
+        p.x[2] = VXOR(p.z[2], p.y[2]);
+    }
+    end_cycles = read_tsc();
+    diff_cycles = ((end_cycles-start_cycles) - iterations )/(iterations);
+    printf("* Vectorized table query in JSF method: %lld\n", diff_cycles);
+
+    // load cache
+    for (i = 0; i < iterations; i++) table_query_wB(&p, b);
+    start_cycles = read_tsc();
+    for (i = 0; i < iterations; i++)
+    {
+        table_query_wB(&p, b);
+        p.x[2] = VXOR(p.z[2], p.y[2]);
+    }
+    end_cycles = read_tsc();
+    diff_cycles = ((end_cycles-start_cycles) - iterations )/(iterations);
+    printf("* Vectorized table query B in NAF method: %lld\n", diff_cycles);
+
+    // load cache
+    for (i = 0; i < iterations; i++) table_query_wA(&p, &q, b);
+    start_cycles = read_tsc();
+    for (i = 0; i < iterations; i++)
+    {
+        table_query_wA(&p, &q, b);
+        p.x[2] = VXOR(p.z[2], p.y[2]);
+    }
+    end_cycles = read_tsc();
+    diff_cycles = ((end_cycles-start_cycles) - iterations )/(iterations);
+    printf("* Vectorized table query A in NAF method: %lld\n", diff_cycles);
+
+
+    // printf("* single Separate double-scalar Point multiplication: %lld\n", diff_cycles/4);
+
+
+}
+
 void timing_point_arith()
 {
     ProPoint p, q, h;
@@ -222,7 +307,8 @@ void timing_point_arith()
     AffPoint f;
     __m256i t[NWORDS], s[NWORDS];
     int i, seed;
-
+    clock_t start_time, end_time;
+    double tp;
     // initialize random generator
     seed = (int) time(NULL);
     srand(seed);
@@ -261,32 +347,49 @@ void timing_point_arith()
 
         puts("\nTwisted Edwards curve:");
 
-       
+        for (i = 0; i < iterations; i++)ted_add(&r, &r, &p);
+        start_cycles = read_tsc();
+        for (i = 0; i < iterations; i++)
+        {
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+            ted_add(&r, &r, &p);
+        }
+        end_cycles = read_tsc();
+        diff_cycles = (end_cycles-start_cycles)/(10*iterations);
+        printf("* 4-Way Point Addition: %lld\n", diff_cycles);
 
-        // load cache
-        // for (i = 0; i < iterations; i++) ted_sep_double_scalar_mul(&h, &p, s, t);
-        // start_cycles = read_tsc();
-        // for (i = 0; i < iterations; i++)
-        // {
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        //     ted_sep_double_scalar_mul(&h, &p, s, t);
-        // }
-        // end_cycles = read_tsc();
-        // diff_cycles = (end_cycles-start_cycles)/(10*iterations);
-        // printf("* 4-Way Separate double-scalar Point multiplication: %lld\n", diff_cycles);
-        // printf("* single Separate double-scalar Point multiplication: %lld\n", diff_cycles/4);
+        for (i = 0; i < iterations; i++)ted_dbl(&r, &r);
+        start_cycles = read_tsc();
+        for (i = 0; i < iterations; i++)
+        {
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+            ted_dbl(&r, &r);
+        }
+        end_cycles = read_tsc();
+        diff_cycles = (end_cycles-start_cycles)/(10*iterations);
+        printf("* 4-Way Point doubling: %lld\n", diff_cycles);
+
 
         // load cache
         for (i = 0; i < iterations; i++) ted_sep_double_scalar_mul_v2(&h, &p, s, t);
         start_cycles = read_tsc();
+        start_time = clock();
         for (i = 0; i < iterations; i++)
         {
             ted_sep_double_scalar_mul_v2(&h, &p, s, t);
@@ -300,50 +403,63 @@ void timing_point_arith()
             ted_sep_double_scalar_mul_v2(&h, &p, s, t);
             ted_sep_double_scalar_mul_v2(&h, &p, s, t);
         }
+        end_time = clock();
         end_cycles = read_tsc();
         diff_cycles = (end_cycles-start_cycles)/(10*iterations);
         printf("* 4-Way Separate double-scalar Point multiplication: %lld\n", diff_cycles);
         printf("* single Separate double-scalar Point multiplication: %lld\n", diff_cycles/4);
-        
-        for (i = 0; i < iterations; i++) ted_sim_double_scalar_mul_v2(&h, &p, s, t);
+        tp = 1e6*4*10*iterations / (double)(end_time-start_time);
+        printf("  - Throughput: %8.1f op/sec\n", tp);
+
+        for (i = 0; i < iterations; i++) ted_sim_double_scalar_mul(&h, &p, s, t);
         start_cycles = read_tsc();
+        start_time = clock();
         for (i = 0; i < iterations; i++)
         {
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
-            ted_sim_double_scalar_mul_v2(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
+            ted_sim_double_scalar_mul(&h, &p, s, t);
         }
+        end_time = clock();
         end_cycles = read_tsc();
         diff_cycles = (end_cycles-start_cycles)/(10*iterations);
         printf("* 4-Way JSF Simultaneous double-scalar Point multiplication: %lld\n", diff_cycles);
         printf("* single JSF Simultaneous double-scalar Point multiplication: %lld\n", diff_cycles/4);
+        tp = 1e6*4*10*iterations / (double)(end_time-start_time);
+        printf("  - Throughput: %8.1f op/sec\n", tp);
 
-        for (i = 0; i < iterations; i++) ted_naf_double_scalar_mul(&h, &p, s, t);
+
+        for (i = 0; i < iterations; i++) ted_naf_double_scalar_mul_v2(&h, &p, s, t);
         start_cycles = read_tsc();
+        start_time = clock();
         for (i = 0; i < iterations; i++)
         {
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
-            ted_naf_double_scalar_mul(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
+            ted_naf_double_scalar_mul_v2(&h, &p, s, t);
         }
         end_cycles = read_tsc();
+        end_time = clock();
         diff_cycles = (end_cycles-start_cycles)/(10*iterations);
         printf("* 4-Way NAF Simultaneous double-scalar Point multiplication: %lld\n", diff_cycles);
         printf("* single NAF Simultaneous double-scalar Point multiplication: %lld\n", diff_cycles/4);
+        tp = 1e6*4*10*iterations / (double)(end_time-start_time);
+        printf("  - Throughput: %8.1f op/sec\n", tp);
+
 
 }
 
@@ -502,20 +618,55 @@ void test_naf()
 }
 
 
-test_naf_sim()
+test_all_zero()
 {
-    uint32_t index = 1;
-    index = index / 2;
-    printf("index / 2 = %u\n", index);
+    __m256i t[8], s[8], d;
+    __m256i VMASK8 = VSET164(mask8);
+    int i,j, seed;
+    const __m256i three = VSET164(3);
+    JSFResult_avx2 r;
+    // initialize random generator
+    seed = (int) time(NULL);
+    srand(seed);
+    int zero_vec = 0;
+    int iterations = 1000;
+    while (iterations > 0)
+    {
+        iterations--;
+        // randomize the input
+        for (i = 0; i < 8; i++) {
+        t[i]   = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        s[i]   = VSET64(mpi29_rand32(), mpi29_rand32(), mpi29_rand32(), mpi29_rand32());
+        }
+        JSF_conv(&r, t, s);
+        for (j = 0; j < r.length; j++)
+        {
+            d = VMUL(three, r.k0[j]);
+            d = VADD(d, r.k1[j]);
+            d = VAND(d, VMASK8);
+            if (is_all_zero(d) == 1) zero_vec++;
+        }
+    }
+    printf("length = %d\n", r.length);
+    printf("number of zero vectors = %d\n", zero_vec);
 }
 
+void timing_all()
+{
+    puts("\n\n*******************************************************************");
+    puts("TIMING OF SOFTWARE (clock cycles):");
+    puts("-------------------------------------------------------------------");
+    puts("Field operations:");
+    timing_fp_arith();
+    puts("-------------------------------------------------------------------");
+    puts("Point operations:");
+    timing_table_query();
+    timing_point_arith();
+    puts("*******************************************************************");
+}
+
+
 int main(){
-    test_dsmul();
-    // test_get_lane();
-    // test_naf_sim();
-    // test_naf();
-    // test_precomp();
-    // timing_point_arith();
-    // test_load_vector();
+    timing_all();
     return 0;
 }

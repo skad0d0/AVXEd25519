@@ -595,7 +595,6 @@ void compute_duifT_v2(ProPoint *table, ProPoint *a)
   __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS];
   uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
   __m256i half_vec[NWORDS], d_vec[NWORDS], zero_vec[NWORDS];
-  // const __m256i zero = VZERO;
   uint32_t zero[NWORDS] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
 
   int i;
@@ -1335,7 +1334,6 @@ void ted_sim_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
     d = VAND(d, VMASK8);
     jsf_query_v2(r, lut, d);
     ted_add(&h, &h, r);
-
   }
   mpi29_copy_avx2(r->x, h.x);
   mpi29_copy_avx2(r->y, h.y);
@@ -1347,6 +1345,9 @@ void ted_sim_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const
   ExtPoint h;
   JSFResult_avx2 j;
   __m256i d;
+  uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
+  __m256i half_vec[NWORDS], zero_vec[NWORDS];
+  uint32_t zero[NWORDS] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
   const __m256i three = VSET164(3);
   const __m256i t0 = VSET164(0xFFFFFFF8U);
   const __m256i t1 = VSET164(0x7FFFFFFFU);
@@ -1368,28 +1369,40 @@ void ted_sim_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const
   sp[0] = VAND(sp[0], t0);
   sp[7] = VAND(sp[7], t1);
   sp[7] = VOR(sp[7], t2);
-
+  
   JSF_conv(&j, sp, kp);
-  
-  // create table
-  ProPoint t[4], lut[4];
+
+  for (i = 0; i < NWORDS; i++) half_vec[i] = VSET164(half[i]);
+  for (i = 0; i < NWORDS; i++) zero_vec[i] = VSET164(zero[i]);
+   // create table
+  ProPoint t[4], lut[5];
   compute_proT(t, p);
-  compute_duifT(lut, t);
-  
-  uint32_t r_x[NWORDS];
+  compute_duifT_v2(lut, t);
+  // printf("j.length = %d\n", j.length);
   //table query
   ted_ext_initialize(&h);
-  // uint32_t index;
-  
   for (i = 255; i >=0; i--)
   {
+    // printf("all zero branch\n");
     ted_dbl(&h, &h);
     d = VMUL(three, j.k0[i]);
     d = VADD(d, j.k1[i]);
     d = VAND(d, VMASK8);
-
-    jsf_query(r, lut, d);
-    ted_add(&h, &h, r);
+    if (is_all_zero(d) == 1)
+    {
+      // printf("all zero branch\n");
+      mpi29_copy_avx2(r->x, half_vec);
+      mpi29_copy_avx2(r->y, half_vec);
+      mpi29_copy_avx2(r->z, zero_vec);
+      ted_add(&h, &h, r);
+    }
+    else
+    {
+      jsf_query_v2(r, lut, d);
+      ted_add(&h, &h, r);
+    }
+    // jsf_query_v2(r, lut, d);
+    // ted_add(&h, &h, r);
 
   }
   mpi29_copy_avx2(r->x, h.x);
@@ -1446,11 +1459,15 @@ void ted_naf_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const
   mpi29_copy_avx2(r->y, h.y);
   mpi29_copy_avx2(r->z, h.z);
 }
-/*
+
 void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
 {
   ExtPoint h;
   NAFResult_avx2 n;
+  uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
+  __m256i half_vec[NWORDS], zero_vec[NWORDS];
+  uint32_t zero[NWORDS] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+
   __m256i sp[8], kp[8];
   int max_len, i;
   const __m256i t0 = VSET164(0xFFFFFFF8U);
@@ -1465,10 +1482,13 @@ void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
   kp[0] = VAND(kp[0], t0); kp[7] = VAND(kp[7], t1); kp[7] = VOR(kp[7], t2);
   sp[0] = VAND(sp[0], t0); sp[7] = VAND(sp[7], t1); sp[7] = VOR(sp[7], t2);
 
+  for (i = 0; i < NWORDS; i++) half_vec[i] = VSET164(half[i]);
+  for (i = 0; i < NWORDS; i++) zero_vec[i] = VSET164(zero[i]);
+
   NAF_conv(&n, sp, kp);
 
   // compute table for variable point 
-  ProPoint lut[9];
+  ProPoint t[8], lut[9];
   ProPoint a;
   mpi29_copy_avx2(a.x, p->x);
   mpi29_copy_avx2(a.y, p->y);
@@ -1476,29 +1496,45 @@ void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
   // point negation
   mpi29_gfp_neg_avx2(a.x);
 
-  compute_table_A_v2(lut, &a);
+  compute_table_A(t, &a);
+  compute_duiftable_A(lut, t);
 
-  ProPoint t;
   // table query
-  ted_pro_initialize(&t);
   ted_ext_initialize(&h);
   max_len = n.max_length;
   for (i = max_len-1; i >= 0; i--)
   {
     ted_dbl(&h, &h);
-    table_query_wB(r, n.k0[i]);
-    ted_add(&h, &h, r);
-    // ted_copy_ext_to_pro(&t1, &h);
-    table_query_wA_v2(r, lut, n.k1[i]);
-    ted_pro_add(&t, &t, r);
-    // ted_copy_pro_to_ext(&h, &t1);
-    // ted_add(&h, &h, r);
+    if (is_all_zero(n.k0[i]) == 1)
+    {
+      mpi29_copy_avx2(r->x, half_vec);
+      mpi29_copy_avx2(r->y, half_vec);
+      mpi29_copy_avx2(r->z, zero_vec);
+      ted_add(&h, &h, r);
+    }
+    else
+    {
+      table_query_wB(r, n.k0[i]);
+      ted_add(&h, &h, r);
+    }
+    if (is_all_zero(n.k1[i]) == 1)
+    {
+      mpi29_copy_avx2(r->x, half_vec);
+      mpi29_copy_avx2(r->y, half_vec);
+      mpi29_copy_avx2(r->z, zero_vec);
+      ted_add(&h, &h, r);
+    }
+    else
+    {
+      table_query_wA(r, lut, n.k1[i]);
+      ted_add(&h, &h, r);
+    }
   }
   mpi29_copy_avx2(r->x, h.x);
   mpi29_copy_avx2(r->y, h.y);
   mpi29_copy_avx2(r->z, h.z);
 }
-*/
+
 
 
 // precomp_table for base point, w=7
