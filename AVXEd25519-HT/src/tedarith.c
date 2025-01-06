@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <inttypes.h>
+
 // initialize a Extended point to [0, 1, 1, 0 ,1]
 static void ted_ext_initialize(ExtPoint *p)
 {
@@ -15,12 +16,15 @@ static void ted_ext_initialize(ExtPoint *p)
     mpi29_ini_to_one_avx2(p->h);
 }
 
+// initialize a protective point to [0, 1, 1]
 static void ted_pro_initialize(ProPoint *p)
 {
   mpi29_ini_to_zero_avx2(p->x);
   mpi29_ini_to_one_avx2(p->y);
   mpi29_ini_to_one_avx2(p->z);
 }
+
+// copy the [x, y, z] coor. of extened point to projective point
 void ted_copy_ext_to_pro(ProPoint *r, ExtPoint *p)
 {
   mpi29_copy_avx2(r->x, p->x);
@@ -28,6 +32,7 @@ void ted_copy_ext_to_pro(ProPoint *r, ExtPoint *p)
   mpi29_copy_avx2(r->z, p->z);
 }
 
+// copy the [x, y, z] coor of projective point to extended point
 void ted_copy_pro_to_ext(ExtPoint *r, ProPoint *p)
 {
   ted_ext_initialize(r);
@@ -35,18 +40,17 @@ void ted_copy_pro_to_ext(ExtPoint *r, ProPoint *p)
   mpi29_copy_avx2(r->y, p->y);
   mpi29_copy_avx2(r->z, p->z);
 }
-// Point addition R = P + Q, Q is in duif point
+
+// Point addition R = P + Q, Q is in duif point, R is in projective point
 void ted_add(ExtPoint *r, ExtPoint *p, ProPoint *q)
 {
     __m256i t[NWORDS];
     mpi29_gfp_mul_avx2(t, p->e, p->h);
     mpi29_gfp_sub_avx2(r->e, p->y, p->x);
-    // mpi29_gfp_sbc_avx2(r->e, p->y, p->x);
     mpi29_gfp_add_avx2(r->h, p->y, p->x);
     mpi29_gfp_mul_avx2(r->x, r->e, q->y);
     mpi29_gfp_mul_avx2(r->y, r->h, q->x);
     mpi29_gfp_sub_avx2(r->e, r->y, r->x);
-    // mpi29_gfp_sbc_avx2(r->e, r->y, r->x);
     mpi29_gfp_add_avx2(r->h, r->y, r->x);
     mpi29_gfp_mul_avx2(r->x, t, q->z);
     mpi29_gfp_sbc_avx2(t, p->z, r->x);
@@ -67,7 +71,6 @@ void ted_dbl(ExtPoint *r, ExtPoint *p)
     mpi29_gfp_add_avx2(r->x, p->x, p->y);
     mpi29_gfp_sqr_avx2(r->e, r->x);
     mpi29_gfp_sub_avx2(r->e, r->h, r->e);
-    // mpi29_gfp_sbc_avx2(r->e, r->h, r->e);
     mpi29_gfp_sqr_avx2(r->y, p->z);
     mpi29_gfp_mul29_avx2(r->y, r->y, 2);
     mpi29_gfp_add_avx2(r->y, t, r->y);
@@ -76,8 +79,69 @@ void ted_dbl(ExtPoint *r, ExtPoint *p)
     mpi29_gfp_mul_avx2(r->y, t, r->h);
 }
 
-// convert 256-bit scalar to 64-bit 4 * nibble
+uint32_t d[NWORDS] = {0x135978A3, 0x0F5A6E50, 0x10762ADD, 0x00149A82, 0x1E898007, 0x003CBBBC, 0x19CE331D, 0x1DC56DFF, 0x0052036C};
 
+// r = p + q, all are projective points
+void ted_pro_add(ProPoint *r, ProPoint *p, ProPoint *q)
+{
+  __m256i d_vec[NWORDS];
+  __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS], t4[NWORDS], t5[NWORDS], t6[NWORDS], t7[NWORDS];
+  int i;
+  for (i = 0; i < NWORDS; i++) d_vec[i] = VSET164(d[i]);
+  
+  mpi29_gfp_mul_avx2(t1, p->z, q->z); // t1 = z1 * z2 (A)
+  mpi29_gfp_sqr_avx2(t2, t1);         // t2 = t1^2 (B)
+  mpi29_gfp_mul_avx2(t3, p->x, q->x); // t3 = x1 * x2 (C)
+  mpi29_gfp_mul_avx2(t4, p->y, q->y); // t4 = y1 * y2 (D)
+  mpi29_gfp_mul_avx2(t5, t3, d_vec);
+  mpi29_gfp_mul_avx2(t5, t5, t4);     // t5 = d*C*D (E)
+  mpi29_gfp_sbc_avx2(t6, t2, t5);     // t6 = B - E (F)
+  mpi29_gfp_add_avx2(t2, t2, t5);     // t2 = B + E (G)
+
+  mpi29_gfp_add_avx2(t5, p->x, p->y);  // t5 = x1 + y1
+  mpi29_gfp_add_avx2(t7, q->x, q->y);  // t7 = x2 + y2
+  mpi29_gfp_mul_avx2(t5, t5, t7);      // t5 = (x1 + y1) * (x2 + y2)
+  mpi29_gfp_sbc_avx2(t5, t5, t3);
+  mpi29_gfp_sbc_avx2(t5, t5, t4);
+  mpi29_gfp_mul_avx2(t5, t5, t6);
+  mpi29_gfp_mul_avx2(r->x, t5, t1);    // x3 = A*F*((X1+Y1)*(X2+Y2)-C-D)
+  mpi29_gfp_mul_avx2(r->z, t6, t2);    // z3 = F*G
+  mpi29_gfp_add_avx2(t5, t4, t3);
+  mpi29_gfp_mul_avx2(t5, t5, t2); 
+  mpi29_gfp_mul_avx2(r->y, t5, t1);    // y3 = A*G*(D+C)
+}
+
+// R = A + B
+// Assumptions: Z2=1.
+// Cost: 9M + 1S + 1*a + 1*d + 7add.
+void ted_Z1_add(ProPoint *r, ProPoint *a, ProPoint *b)
+{
+  __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS], t4[NWORDS], t5[NWORDS], t6[NWORDS];
+  __m256i d_vec[NWORDS];
+
+  int i;
+  for (i = 0; i < NWORDS; i++) d_vec[i] = VSET164(d[i]);
+  mpi29_gfp_sqr_avx2(t1, a->z);       // t1 = Z1^2 (B)
+  mpi29_gfp_mul_avx2(t2, a->x, b->x); // t2 = x1 * x2 (C) -
+  mpi29_gfp_mul_avx2(t3, a->y, b->y); // t3 = y1 * y2 (D) -
+  mpi29_gfp_mul_avx2(t4, t2, d_vec);
+  mpi29_gfp_mul_avx2(t4, t4, t3);     // t4 = d*C*D (E)
+  mpi29_gfp_sbc_avx2(t5, t1, t4);     // t5 = B-E (F) -
+  mpi29_gfp_add_avx2(t6, t1, t4);     // t6 = B+E (G) -
+  mpi29_gfp_add_avx2(t1, a->x, a->y); // t1 = x1 + y1
+  mpi29_gfp_add_avx2(t4, b->x, b->y); // t4 = x2 + y2
+  mpi29_gfp_mul_avx2(t1, t1, t4);
+  mpi29_gfp_sbc_avx2(t1, t1, t2);
+  mpi29_gfp_sbc_avx2(t1, t1, t3);
+  mpi29_gfp_mul_avx2(t1, t5, t1);
+  mpi29_gfp_mul_avx2(r->x, t1, a->z); // X3 = Z1*F*((X1+Y1)*(X2+Y2)-C-D)
+  mpi29_gfp_add_avx2(t1, t2, t3);
+  mpi29_gfp_mul_avx2(t1, t1, t6);
+  mpi29_gfp_mul_avx2(r->y, t1, a->z); // Y3 = Z1*G*(D+C)
+  mpi29_gfp_mul_avx2(r->z, t5, t6);   // Z3 = F*G
+}
+
+// convert 256-bit scalar to 64-bit 4 * nibble
 void ted_conv_scalar_to_nibble(__m256i *e, __m256i *k)
 {
   int i;
@@ -111,7 +175,6 @@ void ted_conv_scalar_to_nibble(__m256i *e, __m256i *k)
 }
 
 // convert the coordinate from 4*64 to 9*29
-// the conversion is [(29), (29), (6] + [23), (29), (12] + [17), 29, (18] + [11), (29), (18] + [11), (29), (24 + 00000)]
 void conv_coor_to_29(__m256i *r, __m256i *a)
 {
     const __m256i mask = VSET164(MASK29);
@@ -133,15 +196,16 @@ void conv_coor_to_29(__m256i *r, __m256i *a)
     r[8] = VAND(VSHR(a[3], 40), mask);
 }
 
+
 // (1/2) in 2^255 -19
 static const uint64_t one_half[4] = { 0xFFFFFFFFFFFFFFF7, 0xFFFFFFFFFFFFFFFF,
-  0xFFFFFFFFFFFFFFFF, 0x3FFFFFFFFFFFFFFF };
+                                      0xFFFFFFFFFFFFFFFF, 0x3FFFFFFFFFFFFFFF };
 
 static const DuifPoint base[32][8];
 static const DuifPoint base_v2[32][9];
 
-
-void ted_table_query_v2(ProPoint *r, const int pos, __m256i b)
+// table query of fixed point B
+void ted_table_query(ProPoint *r, const int pos, __m256i b)
 {
     const __m256i babs = VABS8(b); 
     const __m256i one = VSET164(1);
@@ -154,21 +218,8 @@ void ted_table_query_v2(ProPoint *r, const int pos, __m256i b)
     uint64_t xcoor, ycoor, zcoor;
     int i, j;
     uint32_t index0, index1, index2, index3;
-    index0 = VEXTR32(babs, 0);
-    index1 = VEXTR32(babs, 2);
-    index2 = VEXTR32(babs, 4);
-    index3 = VEXTR32(babs, 6);
-    // index0 = get_lane(&babs, 0);
-    // index1 = get_lane(&babs, 2);
-    // index2 = get_lane(&babs, 4);
-    // index3 = get_lane(&babs, 6);
-    
-    // for (i = 0; i < 4; i++)
-    // {
-    //   xP[i] = VSET64(base_v2[pos][index3].x[i],base_v2[pos][index2].x[i],base_v2[pos][index1].x[i], base_v2[pos][index0].x[i]);
-    //   yP[i] = VSET64(base_v2[pos][index3].y[i],base_v2[pos][index2].y[i],base_v2[pos][index1].y[i], base_v2[pos][index0].y[i]);
-    //   zP[i] = VSET64(base_v2[pos][index3].z[i],base_v2[pos][index2].z[i],base_v2[pos][index1].z[i], base_v2[pos][index0].z[i]);
-    // }
+    index0 = VEXTR32(babs, 0); index1 = VEXTR32(babs, 2);
+    index2 = VEXTR32(babs, 4); index3 = VEXTR32(babs, 6);
 
     for (i = 0; i < 4; i++)
     {
@@ -199,74 +250,147 @@ void ted_table_query_v2(ProPoint *r, const int pos, __m256i b)
     mpi29_cswap_avx2(r->z, t, bsign);
 }
 
-
-
-void ted_table_query(ProPoint *r, const int pos, __m256i b)
+// joint table query used in JSF-based method
+void jsf_query(ProPoint *r, ProPoint *table, const __m256i d)
 {
-    const __m256i babs = VABS8(b); 
-    const __m256i one = VSET164(1);
-    const __m256i zero = VZERO;
-
-    __m256i xP[4], yP[4], zP[4];
-    __m256i mask[9];
-    __m256i t[NWORDS];
-    __m256i xcoor, ycoor, zcoor, index, temp, bsign, bmask;
-    int i,j;
-
-    // create masks
-    index = zero;
-    for (i = 0; i < 9; i++)
-    {
-        mask[i] = VXOR(babs, index);
-        mask[i] = VSUB(mask[i], one);
-        mask[i] = VSHR(mask[i], 32);
-        mask[i] = VSHUF32(mask[i], 0xA0);
-        index = VADD(index, one);
+  const __m256i dabs = VABS8(d);
+  const __m256i one = VSET164(1);
+  const __m256i zero = VZERO;
+  uint32_t xcoor[4][NWORDS], ycoor[4][NWORDS], zcoor[4][NWORDS], index[4];
+  __m256i xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS], temp;
+  int i, j;
+  /* Extract digits from the vector */
+  for (i = 0; i < 4; i++) index[i] = ((uint32_t*) &dabs)[i*2];
+  /* Start table query*/ 
+  for (i = 0; i < 4; i++) {
+    for (j = 0; j < NWORDS; j++) {
+      xcoor[i][j] = ((uint32_t*) &table[index[i]].x[j])[i*2];
+      ycoor[i][j] = ((uint32_t*) &table[index[i]].y[j])[i*2];
+      zcoor[i][j] = ((uint32_t*) &table[index[i]].z[j])[i*2];
     }
+  }
 
-    //query table
-    for(i = 0; i < 4; i++)
-    {
-        // P = [0, 0 ,0]
-        xP[i] = yP[i] = zP[i] = zero;
+  for (i = 0; i < NWORDS; i++)
+  {
+    xP[i] = VSET64(xcoor[3][i], xcoor[2][i], xcoor[1][i], xcoor[0][i]);
+    yP[i] = VSET64(ycoor[3][i], ycoor[2][i], ycoor[1][i], ycoor[0][i]);
+    zP[i] = VSET64(zcoor[3][i], zcoor[2][i], zcoor[1][i], zcoor[0][i]);
+  }
 
-        xcoor = VSET164(one_half[i]);
-        ycoor = VSET164(one_half[i]);
-        
-        xP[i] = VXOR(xP[i], VAND(mask[0], xcoor));
-        yP[i] = VXOR(yP[i], VAND(mask[0], ycoor));
+  __m256i dsign, dmask;
+  dsign = VSHR(d, 7);
+  dmask = VSUB(zero, dsign);
 
-        for(j = 0; j < 8; j++)
-        {
-            xcoor = VBROAD64(VLOAD128(&(base[pos][j].x[i])));
-            ycoor = VBROAD64(VLOAD128(&(base[pos][j].y[i])));
-            zcoor = VBROAD64(VLOAD128(&(base[pos][j].z[i])));
+  // conditional negation
+  for (i = 0; i < NWORDS; i++)
+  {
+      temp = VAND(VXOR(xP[i], yP[i]), dmask);
+      xP[i] = VXOR(xP[i],temp);
+      yP[i] = VXOR(yP[i], temp);
+  }
 
-            xP[i] = VXOR(xP[i], VAND(mask[j + 1], xcoor));
-            yP[i] = VXOR(yP[i], VAND(mask[j + 1], ycoor));
-            zP[i] = VXOR(zP[i], VAND(mask[j + 1], zcoor));
-        }
+  mpi29_copy_avx2(r->x, xP);
+  mpi29_copy_avx2(r->y, yP);
+  mpi29_copy_avx2(r->z, zP);
+
+  mpi29_copy_avx2(t, r->z);
+  mpi29_gfp_neg_avx2(t);
+  mpi29_cswap_avx2(r->z, t, dsign);
+}
+
+// table query for variable point used in naf-based method
+void table_query_wA(ProPoint *r, ProPoint *table, __m256i b)
+{
+  const __m256i babs = VABS32(b);
+  const __m256i one = VSET164(1);
+  const __m256i zero = VZERO;
+  __m256i temp;
+  uint32_t xcoor[4][NWORDS], ycoor[4][NWORDS], zcoor[4][NWORDS], index[4];
+  __m256i xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS];
+  int i, j;
+
+  /* Extract digits from the vector */
+  for (i = 0; i < 4; i++) index[i] = (((uint32_t*) &babs)[i*2] + 1) / 2;
+  /* Start table query*/ 
+  for (i = 0; i < 4; i++) {
+    for (j = 0; j < NWORDS; j++) {
+      xcoor[i][j] = ((uint32_t*) &table[index[i]].x[j])[i*2];
+      ycoor[i][j] = ((uint32_t*) &table[index[i]].y[j])[i*2];
+      zcoor[i][j] = ((uint32_t*) &table[index[i]].z[j])[i*2];
     }
+  }
+  
+  for (i = 0; i < NWORDS; i++)
+  {
+    xP[i] = VSET64(xcoor[3][i], xcoor[2][i], xcoor[1][i], xcoor[0][i]);
+    yP[i] = VSET64(ycoor[3][i], ycoor[2][i], ycoor[1][i], ycoor[0][i]);
+    zP[i] = VSET64(zcoor[3][i], zcoor[2][i], zcoor[1][i], zcoor[0][i]);
+  }
+  __m256i bsign, bmask;
+  bsign = VSHR(b, 31);
+  bmask = VSUB(zero, bsign);
 
-    // if b<0, bsign = 1, bmask is all 1; if b>0, bsign = 0, bmask is all 0.
-    bsign = VSHR(b, 7);
-    bmask = VSUB(zero, bsign);
+  // conditional negation
+  for (i = 0; i < NWORDS; i++)
+  {
+      temp = VAND(VXOR(xP[i], yP[i]), bmask);
+      xP[i] = VXOR(xP[i],temp);
+      yP[i] = VXOR(yP[i], temp);
+  }
 
-    // conditional negation
-    for (i = 0; i < 4; i++)
-    {
-        temp = VAND(VXOR(xP[i], yP[i]), bmask);
-        xP[i] = VXOR(xP[i],temp);
-        yP[i] = VXOR(yP[i], temp);
-    }
-    conv_coor_to_29(r->x, xP);
-    conv_coor_to_29(r->y, yP);
-    conv_coor_to_29(r->z, zP);
+  mpi29_copy_avx2(r->x, xP);
+  mpi29_copy_avx2(r->y, yP);
+  mpi29_copy_avx2(r->z, zP);
 
-    mpi29_copy_avx2(t, r->z);
-    for (i = 0; i < NWORDS; i++) mask[i] = zero;
-    mpi29_gfp_sub_avx2(t, mask, t);
-    mpi29_cswap_avx2(r->z, t, bsign);
+  mpi29_copy_avx2(t, r->z);
+  mpi29_gfp_neg_avx2(t);
+  mpi29_cswap_avx2(r->z, t, bsign);
+}
+
+static const DuifPoint precomp_B[33];
+
+// table query for fixed point B used in naf-based method
+void table_query_wB(ProPoint *r, __m256i b)
+{
+  const __m256i babs = VABS32(b);
+  const __m256i one = VSET164(1);
+  const __m256i zero = VZERO;
+
+  __m256i xP[4], yP[4], zP[4];  
+  __m256i t[NWORDS];
+  __m256i temp, bsign, bmask;
+  uint64_t xcoor, ycoor, zcoor;
+  int i, j;
+  uint32_t index[4];
+  /* Extract digits from the vector */
+  for (i = 0; i < 4; i++) index[i] = (((uint32_t*) &babs)[i*2] + 1) / 2;
+
+  // table query
+  for (i = 0; i < 4; i++)
+  {
+    load_vector(&xP[i], precomp_B[index[0]].x[i], precomp_B[index[1]].x[i], precomp_B[index[2]].x[i], precomp_B[index[3]].x[i]);
+    load_vector(&yP[i], precomp_B[index[0]].y[i], precomp_B[index[1]].y[i], precomp_B[index[2]].y[i], precomp_B[index[3]].y[i]);
+    load_vector(&zP[i], precomp_B[index[0]].z[i], precomp_B[index[1]].z[i], precomp_B[index[2]].z[i], precomp_B[index[3]].z[i]);
+  }
+  // if b<0, bsign = 1, bmask is all 1; if b>0, bsign = 0, bmask is all 0.
+  bsign = VSHR(b, 31);
+  bmask = VSUB(zero, bsign);
+  // conditional negation
+  for (i = 0; i < 4; i++)
+  {
+    temp = VAND(VXOR(xP[i], yP[i]), bmask);
+    xP[i] = VXOR(xP[i],temp);
+    yP[i] = VXOR(yP[i], temp);
+  }
+  conv_coor_to_29(r->x, xP);
+  conv_coor_to_29(r->y, yP);
+  conv_coor_to_29(r->z, zP);
+
+  mpi29_copy_avx2(t, r->z);
+  __m256i swap[NWORDS];
+  for (i = 0; i < NWORDS; i++) swap[i] = zero;
+  mpi29_gfp_sub_avx2(t, swap, t);
+  mpi29_cswap_avx2(r->z, t, bsign);
 }
 
 // R = k*B
@@ -313,49 +437,6 @@ void ted_mul_fixbase(ProPoint *r, const __m256i *k)
   mpi29_copy_avx2(r->z, h.z);
 }
 
-void ted_mul_fixbase_v2(ProPoint *r, const __m256i *k)
-{
-  ExtPoint h;
-  __m256i e[64], kp[8];
-  const __m256i t0 = VSET164(0xFFFFFFF8U);
-  const __m256i t1 = VSET164(0x7FFFFFFFU);
-  const __m256i t2 = VSET164(0x40000000U);
-  int i;
-  // prune k
-  for (i = 0; i < 8; i++) kp[i] = k[i];
-  kp[0] = VAND(kp[0], t0);
-  kp[7] = VAND(kp[7], t1);
-  kp[7] = VOR(kp[7], t2);
-
-  ted_conv_scalar_to_nibble(e, kp);
-  ted_ext_initialize(&h);        
-
-
-  // for odd i
-  for (i = 1; i < 64; i += 2)
-  {
-    ted_table_query_v2(r, i >> 1, e[i]); // pos += 1
-    ted_add(&h, &h, r); // accumulate
-  }
-
-  // res * 16
-  ted_dbl(&h, &h);
-  ted_dbl(&h, &h);
-  ted_dbl(&h, &h);
-  ted_dbl(&h, &h);
-
-  // for even i
-  for (i = 0; i < 64; i+=2)
-  {
-    ted_table_query_v2(r, i >> 1, e[i]);
-    ted_add(&h, &h, r);
-  }
-
-  mpi29_copy_avx2(r->x, h.x);
-  mpi29_copy_avx2(r->y, h.y);
-  mpi29_copy_avx2(r->z, h.z);
-}
-
 
 
 void ted_ext_to_pro(ProPoint *r, ExtPoint *p)
@@ -386,7 +467,8 @@ void ted_pro_to_aff(AffPoint *r, ProPoint *p)
 }
 
 // sqrt(-486664) mod p in radix^29
-uint32_t sqrt486664[NWORDS] = {0x1FFFFFEC, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x007FFFFF};
+uint32_t sqrt486664[NWORDS] = {0x1FFFFFEC, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 
+                               0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x007FFFFF};
 
 // convert both x and y in affine coordinate (Xt, Yt, Zt) -> (Xm, Ym, Zm)
 void conv_ted_to_mon(ProPoint *r, ProPoint *p)
@@ -431,7 +513,8 @@ void point_recovery(ProPoint *r, AffPoint *h, ProPoint *q1, ProPoint *q2)
   // v = z2 * [ (x1 + xm*z1 + 2A*z1) * (x1*xm + z1) - 2A*(z1^2) ] - (x1-xm*z1)^2 * x2
   // z = 2B*ym*z1*z2*z1
   __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS], t4[NWORDS]; 
-  uint32_t CONST2B[NWORDS] = {0x1FF125DD, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x007FFFFF};
+  uint32_t CONST2B[NWORDS] = {0x1FF125DD, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 
+                              0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x007FFFFF};
   int i;
   // create vector
   __m256i CONST2B_vec[NWORDS];
@@ -484,7 +567,16 @@ void ted_mul_varbase(ProPoint *r, ProPoint *p, const __m256i *k)
   conv_mon_to_ted(r, &q3);
 }
 
-// R = s*B - k*A, B is the base point and A is the point on TedCurve
+/**
+ * Performs a double scalar multiplication on twisted Edwards curve points.
+ * 
+ * This function computes r = s*B + k*(-A), where B is a fixed base point and A is the input point.
+ * 
+ * @param r Output point resulting from the double scalar multiplication.
+ * @param p Input point A.
+ * @param s Scalar multiplier for the fixed base point B.
+ * @param k Scalar multiplier for the negated input point -A.
+ */
 void ted_sep_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
 {
   ProPoint p1, p2;
@@ -501,59 +593,8 @@ void ted_sep_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const
   ted_mul_varbase(&p2, &h, k);
 
   ted_pro_add(r, &p1, &p2);
-
-}
-void ted_sep_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
-{
-  ProPoint p1, p2;
-  ProPoint h;
-  mpi29_copy_avx2(h.x, p->x);
-  mpi29_copy_avx2(h.y, p->y);
-  mpi29_copy_avx2(h.z, p->z);
-  // p1 = s*B
-  ted_mul_fixbase_v2(&p1, s);
-
-  // Convert A to -A, (x, y, z) -> (-x, y, z)
-  mpi29_gfp_neg_avx2(h.x);
-  // p2 = k*(-A)
-  ted_mul_varbase(&p2, &h, k);
-
-  ted_pro_add(r, &p1, &p2);
 }
 
-
-
-uint32_t d[NWORDS] = {0x135978A3, 0x0F5A6E50, 0x10762ADD, 0x00149A82, 0x1E898007, 0x003CBBBC, 0x19CE331D, 0x1DC56DFF, 0x0052036C};
-
-void ted_pro_add(ProPoint *r, ProPoint *p, ProPoint *q)
-{
-  __m256i d_vec[NWORDS];
-  __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS], t4[NWORDS], t5[NWORDS], t6[NWORDS], t7[NWORDS];
-  int i;
-  for (i = 0; i < NWORDS; i++) d_vec[i] = VSET164(d[i]);
-  
-  mpi29_gfp_mul_avx2(t1, p->z, q->z); // t1 = z1 * z2 (A)
-  mpi29_gfp_sqr_avx2(t2, t1);         // t2 = t1^2 (B)
-  mpi29_gfp_mul_avx2(t3, p->x, q->x); // t3 = x1 * x2 (C)
-  mpi29_gfp_mul_avx2(t4, p->y, q->y); // t4 = y1 * y2 (D)
-  mpi29_gfp_mul_avx2(t5, t3, d_vec);
-  mpi29_gfp_mul_avx2(t5, t5, t4);     // t5 = d*C*D (E)
-  mpi29_gfp_sbc_avx2(t6, t2, t5);     // t6 = B - E (F)
-  mpi29_gfp_add_avx2(t2, t2, t5);     // t2 = B + E (G)
-
-  mpi29_gfp_add_avx2(t5, p->x, p->y);  // t5 = x1 + y1
-  mpi29_gfp_add_avx2(t7, q->x, q->y);  // t7 = x2 + y2
-  mpi29_gfp_mul_avx2(t5, t5, t7);      // t5 = (x1 + y1) * (x2 + y2)
-  mpi29_gfp_sbc_avx2(t5, t5, t3);
-  mpi29_gfp_sbc_avx2(t5, t5, t4);
-  mpi29_gfp_mul_avx2(t5, t5, t6);
-  mpi29_gfp_mul_avx2(r->x, t5, t1);    // x3 = A*F*((X1+Y1)*(X2+Y2)-C-D)
-  mpi29_gfp_mul_avx2(r->z, t6, t2);    // z3 = F*G
-  mpi29_gfp_add_avx2(t5, t4, t3);
-  mpi29_gfp_mul_avx2(t5, t5, t2); 
-  mpi29_gfp_mul_avx2(r->y, t5, t1);    // y3 = A*G*(D+C)
-
-}
 
 void compute_proT(ProPoint *t, ProPoint *a)
 {
@@ -590,7 +631,7 @@ void compute_proT(ProPoint *t, ProPoint *a)
   ted_Z1_add(&t[3], &neg_a, &b);
 }
 
-void compute_duifT_v2(ProPoint *table, ProPoint *a)
+void compute_duifT(ProPoint *table, ProPoint *a)
 {
   __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS];
   uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
@@ -661,102 +702,6 @@ void compute_duifT_v2(ProPoint *table, ProPoint *a)
 
 }
 
-
-void compute_duifT(ProPoint *table, ProPoint *a)
-{
-  __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS];
-  uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
-  __m256i half_vec[NWORDS], d_vec[NWORDS];
-
-  int i;
-  for (i = 0; i < NWORDS; i++) half_vec[i] = VSET164(half[i]);
-  for (i = 0; i < NWORDS; i++) d_vec[i] = VSET164(d[i]);
-
-  AffPoint h;
-  mpi29_gfp_mul_avx2(t1, a[0].z, a[1].z);
-  mpi29_gfp_mul_avx2(t1, t1, a[3].z); // t1 = z1*zs*zd
-  mpi29_gfp_inv_avx2(t1, t1);         // t1 = 1 / z1*zs*zd
-
-  // convert Table[0] = -A
-  mpi29_gfp_mul_avx2(t2, t1, a[1].z);
-  mpi29_gfp_mul_avx2(t2, t2, a[3].z); // t2 = 1/z1
-  mpi29_gfp_mul_avx2(h.x, t2, a[0].x); // x1 = X1/Z1
-  mpi29_gfp_mul_avx2(h.y, t2, a[0].y); // y1 = Y1/Z1
-
-  mpi29_gfp_add_avx2(t2, h.x, h.y);
-  mpi29_gfp_mul_avx2(table[0].x, t2, half_vec);
-  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
-  mpi29_gfp_mul_avx2(table[0].y, t2, half_vec);
-  mpi29_gfp_mul_avx2(t2, h.x, h.y);
-  mpi29_gfp_mul_avx2(table[0].z, t2, d_vec);
-
-  // convert Table[1] = B+A
-  mpi29_gfp_mul_avx2(t2, t1, a[0].z);
-  mpi29_gfp_mul_avx2(t2, t2, a[3].z); // t2 = 1/z2
-  mpi29_gfp_mul_avx2(h.x, t2, a[1].x); // x2 = X2/Z2
-  mpi29_gfp_mul_avx2(h.y, t2, a[1].y); // y2 = Y2/Z2
-
-  mpi29_gfp_add_avx2(t2, h.x, h.y);
-  mpi29_gfp_mul_avx2(table[1].x, t2, half_vec);
-  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
-  mpi29_gfp_mul_avx2(table[1].y, t2, half_vec);
-  mpi29_gfp_mul_avx2(t2, h.x, h.y);
-  mpi29_gfp_mul_avx2(table[1].z, t2, d_vec);
-
-  // convert Table[3] = B-A
-  mpi29_gfp_mul_avx2(t2, t1, a[0].z);
-  mpi29_gfp_mul_avx2(t2, t2, a[1].z); // t2 = 1/z3
-  mpi29_gfp_mul_avx2(h.x, t2, a[3].x); // x2 = X3/Z3
-  mpi29_gfp_mul_avx2(h.y, t2, a[3].y); // y2 = Y3/Z3
-
-  mpi29_gfp_add_avx2(t2, h.x, h.y);
-  mpi29_gfp_mul_avx2(table[3].x, t2, half_vec);
-  mpi29_gfp_sbc_avx2(t2, h.y, h.x);
-  mpi29_gfp_mul_avx2(table[3].y, t2, half_vec);
-  mpi29_gfp_mul_avx2(t2, h.x, h.y);
-  mpi29_gfp_mul_avx2(table[3].z, t2, d_vec);
-
-  // convert Table[2] = B
-  mpi29_gfp_add_avx2(t1, a[2].x, a[2].y);
-  mpi29_gfp_mul_avx2(table[2].x, t1, half_vec);
-  mpi29_gfp_sbc_avx2(t1, a[2].y, a[2].x);
-  mpi29_gfp_mul_avx2(table[2].y, t1, half_vec);
-  mpi29_gfp_mul_avx2(t1, a[2].x, a[2].y);
-  mpi29_gfp_mul_avx2(table[2].z, t1, d_vec);
-
-}
-
-// R = A + B
-// Assumptions: Z2=1.
-// Cost: 9M + 1S + 1*a + 1*d + 7add.
-void ted_Z1_add(ProPoint *r, ProPoint *a, ProPoint *b)
-{
-  __m256i t1[NWORDS], t2[NWORDS], t3[NWORDS], t4[NWORDS], t5[NWORDS], t6[NWORDS];
-  __m256i d_vec[NWORDS];
-
-  int i;
-  for (i = 0; i < NWORDS; i++) d_vec[i] = VSET164(d[i]);
-  mpi29_gfp_sqr_avx2(t1, a->z);       // t1 = Z1^2 (B)
-  mpi29_gfp_mul_avx2(t2, a->x, b->x); // t2 = x1 * x2 (C) -
-  mpi29_gfp_mul_avx2(t3, a->y, b->y); // t3 = y1 * y2 (D) -
-  mpi29_gfp_mul_avx2(t4, t2, d_vec);
-  mpi29_gfp_mul_avx2(t4, t4, t3);     // t4 = d*C*D (E)
-  mpi29_gfp_sbc_avx2(t5, t1, t4);     // t5 = B-E (F) -
-  mpi29_gfp_add_avx2(t6, t1, t4);     // t6 = B+E (G) -
-  mpi29_gfp_add_avx2(t1, a->x, a->y); // t1 = x1 + y1
-  mpi29_gfp_add_avx2(t4, b->x, b->y); // t4 = x2 + y2
-  mpi29_gfp_mul_avx2(t1, t1, t4);
-  mpi29_gfp_sbc_avx2(t1, t1, t2);
-  mpi29_gfp_sbc_avx2(t1, t1, t3);
-  mpi29_gfp_mul_avx2(t1, t5, t1);
-  mpi29_gfp_mul_avx2(r->x, t1, a->z); // X3 = Z1*F*((X1+Y1)*(X2+Y2)-C-D)
-  mpi29_gfp_add_avx2(t1, t2, t3);
-  mpi29_gfp_mul_avx2(t1, t1, t6);
-  mpi29_gfp_mul_avx2(r->y, t1, a->z); // Y3 = Z1*G*(D+C)
-  mpi29_gfp_mul_avx2(r->z, t5, t6);   // Z3 = F*G
-
-}
-
 // compute table for variable point A at run time, w = 5
 void compute_table_A(ProPoint *t, ProPoint *p)
 {
@@ -789,41 +734,6 @@ void compute_table_A(ProPoint *t, ProPoint *p)
   ted_pro_add(&t[6], &t[5], &p_dbl);
   // 15P
   ted_pro_add(&t[7], &t[6], &p_dbl);
-}
-
-void compute_table_A_v2(ProPoint *t, ProPoint *p)
-{
-  ExtPoint h;
-  ted_ext_initialize(&h);
-  mpi29_copy_avx2(h.x, p->x);
-  mpi29_copy_avx2(h.y, p->y);
-  mpi29_copy_avx2(h.z, p->z);
-  // compute 2P
-  ted_dbl(&h, &h);
-  ProPoint p_dbl;
-  ted_copy_ext_to_pro(&p_dbl, &h);
-
-  // compute table[0, P, 3P, 5P, ... , 15P] 9 points in total
-  // 0
-  ted_pro_initialize(&t[0]);
-  // P
-  mpi29_copy_avx2(t[1].x, p->x);
-  mpi29_copy_avx2(t[1].y, p->y);
-  mpi29_copy_avx2(t[1].z, p->z);
-  // 3P
-  ted_pro_add(&t[2], &t[1], &p_dbl);
-  // 5P
-  ted_pro_add(&t[3], &t[2], &p_dbl);
-  // 7P
-  ted_pro_add(&t[4], &t[3], &p_dbl);
-  // 9P
-  ted_pro_add(&t[5], &t[4], &p_dbl);
-  // 11P
-  ted_pro_add(&t[6], &t[5], &p_dbl);
-  // 13P
-  ted_pro_add(&t[7], &t[6], &p_dbl);
-  // 15P
-  ted_pro_add(&t[8], &t[7], &p_dbl);
 }
 
 
@@ -1004,297 +914,24 @@ void compute_duiftable_A(ProPoint *table, ProPoint *p)
   mpi29_gfp_mul_avx2(table[8].z, t2, d_vec);
 }
 
-static const DuifPoint precomp_B[33];
-
-void table_query_wB(ProPoint *r, __m256i b)
-{
-  const __m256i babs = VABS32(b);
-  const __m256i one = VSET164(1);
-  const __m256i zero = VZERO;
-
-
-
-  __m256i xP[4], yP[4], zP[4];  
-  __m256i t[NWORDS];
-  __m256i temp, bsign, bmask;
-  uint64_t xcoor, ycoor, zcoor;
-  int i, j;
-  uint32_t index0, index1, index2, index3;
-  index0 = (VEXTR32(babs, 0) + 1) / 2;
-  index1 = (VEXTR32(babs, 2) + 1) / 2;
-  index2 = (VEXTR32(babs, 4) + 1) / 2;
-  index3 = (VEXTR32(babs, 6) + 1) / 2;
-
-  // table query
-  for (i = 0; i < 4; i++)
-  {
-    load_vector(&xP[i], precomp_B[index0].x[i], precomp_B[index1].x[i], precomp_B[index2].x[i], precomp_B[index3].x[i]);
-    load_vector(&yP[i], precomp_B[index0].y[i], precomp_B[index1].y[i], precomp_B[index2].y[i], precomp_B[index3].y[i]);
-    load_vector(&zP[i], precomp_B[index0].z[i], precomp_B[index1].z[i], precomp_B[index2].z[i], precomp_B[index3].z[i]);
-  }
-  // if b<0, bsign = 1, bmask is all 1; if b>0, bsign = 0, bmask is all 0.
-  bsign = VSHR(b, 31);
-  bmask = VSUB(zero, bsign);
-  // conditional negation
-  for (i = 0; i < 4; i++)
-  {
-    temp = VAND(VXOR(xP[i], yP[i]), bmask);
-    xP[i] = VXOR(xP[i],temp);
-    yP[i] = VXOR(yP[i], temp);
-  }
-  conv_coor_to_29(r->x, xP);
-  conv_coor_to_29(r->y, yP);
-  conv_coor_to_29(r->z, zP);
-
-  mpi29_copy_avx2(t, r->z);
-  __m256i swap[NWORDS];
-  for (i = 0; i < NWORDS; i++) swap[i] = zero;
-  mpi29_gfp_sub_avx2(t, swap, t);
-  mpi29_cswap_avx2(r->z, t, bsign);
-}
-
-void table_query_wA(ProPoint *r, ProPoint *table, __m256i b)
-{
-  const __m256i babs = VABS32(b);
-  const __m256i one = VSET164(1);
-  const __m256i zero = VZERO;
-  __m256i index, temp;
-  uint32_t xcoor0[NWORDS], ycoor0[NWORDS], zcoor0[NWORDS];
-  uint32_t xcoor1[NWORDS], ycoor1[NWORDS], zcoor1[NWORDS];
-  uint32_t xcoor2[NWORDS], ycoor2[NWORDS], zcoor2[NWORDS];
-  uint32_t xcoor3[NWORDS], ycoor3[NWORDS], zcoor3[NWORDS];
-  __m256i xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS];
-  int i, j;
-
-  uint32_t index0, index1, index2, index3;
-  index0 = (VEXTR32(babs, 0) + 1) / 2;
-  index1 = (VEXTR32(babs, 2) + 1) / 2;
-  index2 = (VEXTR32(babs, 4) + 1) / 2;
-  index3 = (VEXTR32(babs, 6) + 1) / 2;
-
-  get_channel(xcoor0, table[index0].x, NWORDS, 0); get_channel(ycoor0, table[index0].y, NWORDS, 0); get_channel(zcoor0, table[index0].z, NWORDS, 0);
-  get_channel(xcoor1, table[index1].x, NWORDS, 2); get_channel(ycoor1, table[index1].y, NWORDS, 2); get_channel(zcoor1, table[index1].z, NWORDS, 2);
-  get_channel(xcoor2, table[index2].x, NWORDS, 4); get_channel(ycoor2, table[index2].y, NWORDS, 4); get_channel(zcoor2, table[index2].z, NWORDS, 4);
-  get_channel(xcoor3, table[index3].x, NWORDS, 6); get_channel(ycoor3, table[index3].y, NWORDS, 6); get_channel(zcoor3, table[index3].z, NWORDS, 6);
-
-  for (i = 0; i < NWORDS; i++)
-  {
-    xP[i] = VSET64(xcoor3[i], xcoor2[i], xcoor1[i], xcoor0[i]);
-    yP[i] = VSET64(ycoor3[i], ycoor2[i], ycoor1[i], ycoor0[i]);
-    zP[i] = VSET64(zcoor3[i], zcoor2[i], zcoor1[i], zcoor0[i]);
-  }
-  __m256i bsign, bmask;
-  bsign = VSHR(b, 31);
-  bmask = VSUB(zero, bsign);
-
-  // conditional negation
-  for (i = 0; i < NWORDS; i++)
-  {
-      temp = VAND(VXOR(xP[i], yP[i]), bmask);
-      xP[i] = VXOR(xP[i],temp);
-      yP[i] = VXOR(yP[i], temp);
-  }
-
-  mpi29_copy_avx2(r->x, xP);
-  mpi29_copy_avx2(r->y, yP);
-  mpi29_copy_avx2(r->z, zP);
-
-  mpi29_copy_avx2(t, r->z);
-  mpi29_gfp_neg_avx2(t);
-  mpi29_cswap_avx2(r->z, t, bsign);
-
-}
-
-void table_query_wA_v2(ProPoint *r, ProPoint *table, __m256i b)
-{
-  const __m256i babs = VABS32(b);
-  const __m256i one = VSET164(1);
-  const __m256i zero = VZERO;
-  __m256i index, temp[NWORDS];
-  uint32_t xcoor0[NWORDS], ycoor0[NWORDS], zcoor0[NWORDS];
-  uint32_t xcoor1[NWORDS], ycoor1[NWORDS], zcoor1[NWORDS];
-  uint32_t xcoor2[NWORDS], ycoor2[NWORDS], zcoor2[NWORDS];
-  uint32_t xcoor3[NWORDS], ycoor3[NWORDS], zcoor3[NWORDS];
-  __m256i xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS];
-  int i, j;
-
-  uint32_t index0, index1, index2, index3;
-  index0 = (VEXTR32(babs, 0) + 1) / 2;
-  index1 = (VEXTR32(babs, 2) + 1) / 2;
-  index2 = (VEXTR32(babs, 4) + 1) / 2;
-  index3 = (VEXTR32(babs, 6) + 1) / 2;
-
-  get_channel(xcoor0, table[index0].x, NWORDS, 0); get_channel(ycoor0, table[index0].y, NWORDS, 0); get_channel(zcoor0, table[index0].z, NWORDS, 0);
-  get_channel(xcoor1, table[index1].x, NWORDS, 2); get_channel(ycoor1, table[index1].y, NWORDS, 2); get_channel(zcoor1, table[index1].z, NWORDS, 2);
-  get_channel(xcoor2, table[index2].x, NWORDS, 4); get_channel(ycoor2, table[index2].y, NWORDS, 4); get_channel(zcoor2, table[index2].z, NWORDS, 4);
-  get_channel(xcoor3, table[index3].x, NWORDS, 6); get_channel(ycoor3, table[index3].y, NWORDS, 6); get_channel(zcoor3, table[index3].z, NWORDS, 6);
-
-  for (i = 0; i < NWORDS; i++)
-  {
-    xP[i] = VSET64(xcoor3[i], xcoor2[i], xcoor1[i], xcoor0[i]);
-    yP[i] = VSET64(ycoor3[i], ycoor2[i], ycoor1[i], ycoor0[i]);
-    zP[i] = VSET64(zcoor3[i], zcoor2[i], zcoor1[i], zcoor0[i]);
-  }
-  __m256i bsign;
-  bsign = VSHR(b, 31);
-
-  mpi29_copy_avx2(r->x, xP);
-  mpi29_copy_avx2(r->y, yP);
-  mpi29_copy_avx2(r->z, zP);
-  // conditional negation
-  mpi29_copy_avx2(temp, xP);
-  mpi29_gfp_neg_avx2(temp);
-  mpi29_cswap_avx2(r->x, temp, bsign);
-}
-
-
-void jsf_query(ProPoint *r, ProPoint *table, const __m256i d)
-{
-  uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
-  __m256i dabs = VABS8(d);
-
-  const __m256i one = VSET164(1);
-  const __m256i zero = VZERO;
-  __m256i xcoor, ycoor, zcoor, index, temp;
-  __m256i mask[5], xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS];
-  int i, j;
-
-  // uint32_t index0, index1, index2, index3;
-
-  // index0 = VEXTR32(dabs, 0);
-  // index1 = VEXTR32(dabs, 2);
-  // index2 = VEXTR32(dabs, 4);
-  // index3 = VEXTR32(dabs, 6);
-  // printf('---------- v1 -------------\n');
-  // printf("index0 = %u\n", index0);
-  // printf("index1 = %u\n", index1);
-  // printf("index2 = %u\n", index2);
-  // printf("index3 = %u\n", index3);
-
-
-  index = zero;
-  // create mask in [0,4]
-  for (i = 0; i < 5; i++)
-  {
-    mask[i] = VXOR(dabs, index);
-    mask[i] = VSUB(mask[i], one);
-    mask[i] = VSHR(mask[i], 16);
-    temp = mask[i];
-    mask[i] = VSHL(mask[i], 16);
-    mask[i] = VOR(mask[i], temp);
-    index = VADD(index, one);
-  } 
-
-
-  // query table
-  for (i = 0; i < NWORDS; i++)
-  {
-    xP[i] = yP[i] = zP[i] = zero;
-    xcoor = VSET164(half[i]);
-    ycoor = VSET164(half[i]);
-    // d = 0, xP = 1/2, yP = 1/2, zP = 0
-    xP[i] = VXOR(xP[i], VAND(mask[0], xcoor));
-    yP[i] = VXOR(yP[i], VAND(mask[0], ycoor));
-
-    for (j = 0; j < 4; j++)
-    {
-      xcoor = table[j].x[i];
-      ycoor = table[j].y[i];
-      zcoor = table[j].z[i];
-
-      xP[i] = VXOR(xP[i], VAND(mask[j + 1], xcoor));
-      yP[i] = VXOR(yP[i], VAND(mask[j + 1], ycoor));
-      zP[i] = VXOR(zP[i], VAND(mask[j + 1], zcoor));
-    }
-  }
-
-  __m256i dsign, dmask;
-  dsign = VSHR(d, 7);
-  dmask = VSUB(zero, dsign);
-
-  // conditional negation
-  for (i = 0; i < NWORDS; i++)
-  {
-      temp = VAND(VXOR(xP[i], yP[i]), dmask);
-      xP[i] = VXOR(xP[i],temp);
-      yP[i] = VXOR(yP[i], temp);
-  }
-
-  mpi29_copy_avx2(r->x, xP);
-  mpi29_copy_avx2(r->y, yP);
-  mpi29_copy_avx2(r->z, zP);
-
-  mpi29_copy_avx2(t, r->z);
-  mpi29_gfp_neg_avx2(t);
-  mpi29_cswap_avx2(r->z, t, dsign);
-}
-
-void jsf_query_v2(ProPoint *r, ProPoint *table, const __m256i d)
-{
-  const __m256i dabs = VABS8(d);
-  const __m256i one = VSET164(1);
-  const __m256i zero = VZERO;
-  __m256i index, temp;
-  uint32_t xcoor0[NWORDS], ycoor0[NWORDS], zcoor0[NWORDS];
-  uint32_t xcoor1[NWORDS], ycoor1[NWORDS], zcoor1[NWORDS];
-  uint32_t xcoor2[NWORDS], ycoor2[NWORDS], zcoor2[NWORDS];
-  uint32_t xcoor3[NWORDS], ycoor3[NWORDS], zcoor3[NWORDS];
-  __m256i xP[NWORDS], yP[NWORDS], zP[NWORDS], t[NWORDS];
-  int i, j;
-
-  uint32_t index0, index1, index2, index3;
-
-  // index0 = VEXTR32(dabs, 0);
-  // index1 = VEXTR32(dabs, 2);
-  // index2 = VEXTR32(dabs, 4);
-  // index3 = VEXTR32(dabs, 6);
-  index0 = get_lane(&dabs, 0);
-  index1 = get_lane(&dabs, 2);
-  index2 = get_lane(&dabs, 4);
-  index3 = get_lane(&dabs, 6);
-
-  get_channel(xcoor0, table[index0].x, NWORDS, 0); get_channel(ycoor0, table[index0].y, NWORDS, 0); get_channel(zcoor0, table[index0].z, NWORDS, 0);
-  get_channel(xcoor1, table[index1].x, NWORDS, 2); get_channel(ycoor1, table[index1].y, NWORDS, 2); get_channel(zcoor1, table[index1].z, NWORDS, 2);
-  get_channel(xcoor2, table[index2].x, NWORDS, 4); get_channel(ycoor2, table[index2].y, NWORDS, 4); get_channel(zcoor2, table[index2].z, NWORDS, 4);
-  get_channel(xcoor3, table[index3].x, NWORDS, 6); get_channel(ycoor3, table[index3].y, NWORDS, 6); get_channel(zcoor3, table[index3].z, NWORDS, 6);
-
-  for (i = 0; i < NWORDS; i++)
-  {
-    xP[i] = VSET64(xcoor3[i], xcoor2[i], xcoor1[i], xcoor0[i]);
-    yP[i] = VSET64(ycoor3[i], ycoor2[i], ycoor1[i], ycoor0[i]);
-    zP[i] = VSET64(zcoor3[i], zcoor2[i], zcoor1[i], zcoor0[i]);
-  }
-
-  // xcoor = VSET64(table[index3].x, table[index2].x, table[index1].x, table[index0].x); 
-
-
-  __m256i dsign, dmask;
-  dsign = VSHR(d, 7);
-  dmask = VSUB(zero, dsign);
-
-  // conditional negation
-  for (i = 0; i < NWORDS; i++)
-  {
-      temp = VAND(VXOR(xP[i], yP[i]), dmask);
-      xP[i] = VXOR(xP[i],temp);
-      yP[i] = VXOR(yP[i], temp);
-  }
-
-  mpi29_copy_avx2(r->x, xP);
-  mpi29_copy_avx2(r->y, yP);
-  mpi29_copy_avx2(r->z, zP);
-
-  mpi29_copy_avx2(t, r->z);
-  mpi29_gfp_neg_avx2(t);
-  mpi29_cswap_avx2(r->z, t, dsign);
-}
-
-
-void ted_sim_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
+/**
+ * @brief Double scalar multiplication using JSF and AVX2.
+ *
+ * Computes `r = s*B + k*p` using AVX2 instructions.
+ *
+ * @param[out] r  Resulting point.
+ * @param[in]  p  Input point.
+ * @param[in]  s  First scalar.
+ * @param[in]  k  Second scalar.
+ */
+void ted_jsf_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
 {
   ExtPoint h;
   JSFResult_avx2 j;
   __m256i d;
+  uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
+  __m256i half_vec[NWORDS], zero_vec[NWORDS];
+  uint32_t zero[NWORDS] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
   const __m256i three = VSET164(3);
   const __m256i t0 = VSET164(0xFFFFFFF8U);
   const __m256i t1 = VSET164(0x7FFFFFFFU);
@@ -1316,23 +953,28 @@ void ted_sim_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
   sp[0] = VAND(sp[0], t0);
   sp[7] = VAND(sp[7], t1);
   sp[7] = VOR(sp[7], t2);
-
+  
   JSF_conv(&j, sp, kp);
+
+  for (i = 0; i < NWORDS; i++) half_vec[i] = VSET164(half[i]);
+  for (i = 0; i < NWORDS; i++) zero_vec[i] = VSET164(zero[i]);
   
   // create table
   ProPoint t[4], lut[5];
   compute_proT(t, p);
-  compute_duifT_v2(lut, t);
-  
-  //table query
+  compute_duifT(lut, t);
+
+  // table query
   ted_ext_initialize(&h);
-  for (i = 255; i >=0; i--)
+  for (i = 255; i >= 0; i--)
   {
     ted_dbl(&h, &h);
     d = VMUL(three, j.k0[i]);
     d = VADD(d, j.k1[i]);
     d = VAND(d, VMASK8);
-    jsf_query_v2(r, lut, d);
+
+    if (is_all_zero(d) == 1) continue;
+    jsf_query(r, lut, d);
     ted_add(&h, &h, r);
   }
   mpi29_copy_avx2(r->x, h.x);
@@ -1340,130 +982,21 @@ void ted_sim_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
   mpi29_copy_avx2(r->z, h.z);
 }
 
-void ted_sim_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
-{
-  ExtPoint h;
-  JSFResult_avx2 j;
-  __m256i d;
-  uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
-  __m256i half_vec[NWORDS], zero_vec[NWORDS];
-  uint32_t zero[NWORDS] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
-  const __m256i three = VSET164(3);
-  const __m256i t0 = VSET164(0xFFFFFFF8U);
-  const __m256i t1 = VSET164(0x7FFFFFFFU);
-  const __m256i t2 = VSET164(0x40000000U);
-  __m256i VMASK8 = VSET164(mask8);
-  __m256i sp[8], kp[8];
-  int i;
 
-  for (i = 0; i < 8; i++)
-  {
-    sp[i] = s[i];
-    kp[i] = k[i];
-  }
-  // prune the scalar
-  kp[0] = VAND(kp[0], t0);
-  kp[7] = VAND(kp[7], t1);
-  kp[7] = VOR(kp[7], t2);
-
-  sp[0] = VAND(sp[0], t0);
-  sp[7] = VAND(sp[7], t1);
-  sp[7] = VOR(sp[7], t2);
-  
-  JSF_conv(&j, sp, kp);
-
-  for (i = 0; i < NWORDS; i++) half_vec[i] = VSET164(half[i]);
-  for (i = 0; i < NWORDS; i++) zero_vec[i] = VSET164(zero[i]);
-   // create table
-  ProPoint t[4], lut[5];
-  compute_proT(t, p);
-  compute_duifT_v2(lut, t);
-  // printf("j.length = %d\n", j.length);
-  //table query
-  ted_ext_initialize(&h);
-  for (i = 255; i >=0; i--)
-  {
-    // printf("all zero branch\n");
-    ted_dbl(&h, &h);
-    d = VMUL(three, j.k0[i]);
-    d = VADD(d, j.k1[i]);
-    d = VAND(d, VMASK8);
-    if (is_all_zero(d) == 1)
-    {
-      // printf("all zero branch\n");
-      mpi29_copy_avx2(r->x, half_vec);
-      mpi29_copy_avx2(r->y, half_vec);
-      mpi29_copy_avx2(r->z, zero_vec);
-      ted_add(&h, &h, r);
-    }
-    else
-    {
-      jsf_query_v2(r, lut, d);
-      ted_add(&h, &h, r);
-    }
-    // jsf_query_v2(r, lut, d);
-    // ted_add(&h, &h, r);
-
-  }
-  mpi29_copy_avx2(r->x, h.x);
-  mpi29_copy_avx2(r->y, h.y);
-  mpi29_copy_avx2(r->z, h.z);
-
-}
-
-
+/**
+ * @brief Double scalar multiplication using NAF and AVX2.
+ *
+ * Computes `r = s*B + k*p` using AVX2 instructions.
+ *
+ * @param[out] r  Resulting point.
+ * @param[in]  p  Input point.
+ * @param[in]  s  First scalar.
+ * @param[in]  k  Second scalar.
+ */
 void ted_naf_double_scalar_mul(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
 {
   ExtPoint h;
   NAFResult_avx2 n;
-  __m256i sp[8], kp[8];
-  int max_len, i;
-  const __m256i t0 = VSET164(0xFFFFFFF8U);
-  const __m256i t1 = VSET164(0x7FFFFFFFU);
-  const __m256i t2 = VSET164(0x40000000U);
-  for (i = 0; i < 8; i++)
-  {
-    sp[i] = s[i];
-    kp[i] = k[i];
-  }
-  // prune the scalar
-  kp[0] = VAND(kp[0], t0); kp[7] = VAND(kp[7], t1); kp[7] = VOR(kp[7], t2);
-  sp[0] = VAND(sp[0], t0); sp[7] = VAND(sp[7], t1); sp[7] = VOR(sp[7], t2);
-
-  NAF_conv(&n, sp, kp);
-
-  // compute table for variable point 
-  ProPoint t[8], lut[9];
-  ProPoint a;
-  mpi29_copy_avx2(a.x, p->x);
-  mpi29_copy_avx2(a.y, p->y);
-  mpi29_copy_avx2(a.z, p->z);
-  // point negation
-  mpi29_gfp_neg_avx2(a.x);
-
-  compute_table_A(t, &a);
-  compute_duiftable_A(lut, t);
-
-  // table query
-  ted_ext_initialize(&h);
-  max_len = n.max_length;
-  for (i = max_len-1; i >= 0; i--)
-  {
-    ted_dbl(&h, &h);
-    table_query_wB(r, n.k0[i]);
-    ted_add(&h, &h, r);
-    table_query_wA(r, lut, n.k1[i]);
-    ted_add(&h, &h, r);
-  }
-  mpi29_copy_avx2(r->x, h.x);
-  mpi29_copy_avx2(r->y, h.y);
-  mpi29_copy_avx2(r->z, h.z);
-}
-
-void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, const __m256i *k)
-{
-  ExtPoint h;
-  NAFResult_avx2 n;
   uint32_t half[NWORDS] = {0x1FFFFFF7, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x1FFFFFFF, 0x003FFFFF};
   __m256i half_vec[NWORDS], zero_vec[NWORDS];
   uint32_t zero[NWORDS] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
@@ -1505,26 +1038,12 @@ void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
   for (i = max_len-1; i >= 0; i--)
   {
     ted_dbl(&h, &h);
-    if (is_all_zero(n.k0[i]) == 1)
-    {
-      mpi29_copy_avx2(r->x, half_vec);
-      mpi29_copy_avx2(r->y, half_vec);
-      mpi29_copy_avx2(r->z, zero_vec);
-      ted_add(&h, &h, r);
-    }
-    else
+    if (is_all_zero(n.k0[i]) != 1)
     {
       table_query_wB(r, n.k0[i]);
       ted_add(&h, &h, r);
     }
-    if (is_all_zero(n.k1[i]) == 1)
-    {
-      mpi29_copy_avx2(r->x, half_vec);
-      mpi29_copy_avx2(r->y, half_vec);
-      mpi29_copy_avx2(r->z, zero_vec);
-      ted_add(&h, &h, r);
-    }
-    else
+    if (is_all_zero(n.k1[i]) != 1)
     {
       table_query_wA(r, lut, n.k1[i]);
       ted_add(&h, &h, r);
@@ -1537,6 +1056,9 @@ void ted_naf_double_scalar_mul_v2(ProPoint *r, ProPoint *p, const __m256i *s, co
 
 
 
+
+
+// ======================== Precomputed table ======================== //
 // precomp_table for base point, w=7
 
 static const DuifPoint precomp_B[33] = 

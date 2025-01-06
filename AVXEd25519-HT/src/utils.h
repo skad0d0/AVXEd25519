@@ -2,9 +2,9 @@
  ******************************************************************************
  * @file utils.h
  * @version 1.0.1
- * @date 2020-09-01
+ * @date 2024-10-01
  * @copyright Copyright © 2020 by University of Luxembourg.
- * @author Developed at SnT APSIA by: H. Cheng, J. Groszschaedl, and J. Tian.
+ * @author Developed at SnT APSIA by: H. Cheng, J. Groszschaedl, and B. Zhang.
  *
  * @brief Header file of utility functions.
  *

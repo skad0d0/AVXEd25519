@@ -1,7 +1,7 @@
 #include "gfparith.h"
 #include <stdio.h>
 
-// r = a + b mod p
+// r = a + b
 void mpi29_gfp_add_avx2(__m256i *r, const __m256i *a, const __m256i *b)
 {
     // load a and b
@@ -26,6 +26,7 @@ void mpi29_gfp_add_avx2(__m256i *r, const __m256i *a, const __m256i *b)
     r[6] = r6; r[7] = r7; r[8] = r8;
 }
 
+// r = a - b
 void mpi29_gfp_sub_avx2(__m256i *r, const __m256i *a, const __m256i *b)
 {
   __m256i a0 = a[0], a1 = a[1], a2 = a[2];
@@ -38,7 +39,6 @@ void mpi29_gfp_sub_avx2(__m256i *r, const __m256i *a, const __m256i *b)
   const __m256i VDLSWP = VSET164(LSWP29*2);
   const __m256i VDWRDP = VSET164(MASK29*2);
 
-  // NOTE: if put (a[i]-b[i]) at the latter position, it is faster.
   r0 = VADD(VDLSWP, VSUB(a0, b0));
   r1 = VADD(VDWRDP, VSUB(a1, b1));
   r2 = VADD(VDWRDP, VSUB(a2, b2));
@@ -228,7 +228,7 @@ void mpi29_gfp_mul_avx2(__m256i *r, const __m256i *a, const __m256i *b)
     r[6] = r6; r[7] = r7; r[8] = r8;
 }
 
-// r = a * b mod p, b is a 29-bit integer
+// r = a * b mod p, b is an integer
 void mpi29_gfp_mul29_avx2(__m256i *r, const __m256i *a, const uint32_t b)
 {
     __m256i a0 = a[0], a1 = a[1], a2 = a[2];
@@ -381,6 +381,8 @@ void mpi29_gfp_sqr_avx2(__m256i *r, const __m256i *a)
     r[6] = r6; r[7] = r7; r[8] = r8;
 }
 
+
+// r = a^-1 mod p
 void mpi29_gfp_inv_avx2(__m256i *r, const __m256i *a)
 {
     __m256i t0[NWORDS], t1[NWORDS], t2[NWORDS], t3[NWORDS];
@@ -469,6 +471,8 @@ void mpi29_cswap_avx2(__m256i *r, __m256i *a, const __m256i b)
     a[3] = a3; a[4] = a4; a[5] = a5;
     a[6] = a6; a[7] = a7; a[8] = a8;
 }
+
+// copy limb vector a to r
 void mpi29_copy_avx2(__m256i *r, const __m256i *a)
 {
     r[0] = a[0];
@@ -556,7 +560,7 @@ void mpi29_ini_to_zero_avx2(__m256i *r)
 
 }
 
-// if 4 number in vector r is all zero
+// check if 4 coefficients are zero at the same position
 int is_all_zero(__m256i r)
 {
     return _mm256_testz_si256(r, r);

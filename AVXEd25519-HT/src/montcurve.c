@@ -10,14 +10,12 @@ void mon_ladder_step(ProPoint *p, ProPoint *q, const __m256i *xd)
     mpi29_gfp_sbc_avx2(p->x, p->x, p->z);        // xP = xP - zP
     mpi29_gfp_add_avx2(t2, q->x, q->z);          // t2 = xQ + zQ
     mpi29_gfp_sub_avx2(q->x, q->x, q->z);
-    // mpi29_gfp_sbc_avx2(q->x, q->x, q->z);        // xQ = xQ - zQ
     mpi29_gfp_sqr_avx2(p->z, t1);                // zP = t1 ^ 2
     mpi29_gfp_mul_avx2(q->z, t2, p->x);          // zQ = t2 * xP
     mpi29_gfp_mul_avx2(t2, q->x, t1);            // t2 = xQ * t1
     mpi29_gfp_sqr_avx2(t1, p->x);                // t1 = xP ^ 2
     mpi29_gfp_mul_avx2(p->x, p->z, t1);          // xP = zP * t1
     mpi29_gfp_sub_avx2(t1, p->z, t1);
-    // mpi29_gfp_sbc_avx2(t1, p->z, t1);            // t1 = zP - t1
     mpi29_gfp_mul29_avx2(q->x, t1, 121665);       // xQ = t1 * (A-2)/4
     mpi29_gfp_add_avx2(q->x, q->x, p->z);        // xQ = xQ + zP
     mpi29_gfp_mul_avx2(p->z, q->x, t1);          // zP = xQ * t1

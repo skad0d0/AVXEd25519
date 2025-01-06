@@ -1,3 +1,28 @@
+/**
+ ******************************************************************************
+ * @file gfparith.h
+ * @version 1.0.0
+ * @date 2024-10-01
+ * @copyright Copyright © 2024 by University of Luxembourg.
+ * @author Developed at SnT APSIA by: Bowen Zhang.
+ *
+ * @brief Header file for AVX2-optimized arithmetic operations on field elements using radix-2^29 representation.
+ *
+ * @details
+ * This file contains function declarations and macros for performing arithmetic operations on field elements
+ * using AVX2 intrinsics. The field elements are represented in a radix-2^29 format.
+ *
+ * Macros:
+ * - NWORDS: Number of words in the field element representation.
+ * - BITS29: Number of bits in each word (29 bits).
+ * - BITS23: Number of bits in the last word (23 bits).
+ * - MASK29: Mask for 29-bit words.
+ * - CONST2A: Constant value 2A.
+ * - CONSTC: Constant value C.
+ * - MASK23: Mask for 23-bit words.
+ * - LSWP29: Least significant 29-bit word of p.
+ ******************************************************************************
+ */
 #ifndef _GFPARITH_H
 #define _GFPARITH_H
 

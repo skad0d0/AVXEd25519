@@ -100,10 +100,8 @@ void JSF_conv(JSFResult_avx2 *r, const __m256i *s, const __m256i *h)
         h4[i] = VEXTR32(h[i], 6);        
     }
 
-    JSF(&r1, s1, h1);
-    JSF(&r2, s2, h2);
-    JSF(&r3, s3, h3);
-    JSF(&r4, s4, h4);
+    JSF(&r1, s1, h1); JSF(&r2, s2, h2);
+    JSF(&r3, s3, h3); JSF(&r4, s4, h4);
 
     for (i = 0; i < 256; i++)
     {

@@ -144,18 +144,9 @@ void mpi29_print(const char *c, const uint32_t *a, int len)
 }
 
 void get_channel(uint32_t *r, const __m256i *a, const int ch_length, const int ch)
-{
-  int i;
+{ for (int i = 0; i < ch_length; i++) r[i] = ((uint32_t*)&a[i])[ch]; }
 
-  for (i = 0; i < ch_length; i++) r[i] = ((uint32_t*)&a[i])[ch];
-}
-
-uint32_t get_lane(const __m256i *a, const int ch)
-{
-  uint32_t r;
-  r = ((uint32_t*)a)[ch];
-  return r;
-}
+uint32_t get_lane(const __m256i *a, const int ch) { return ((uint32_t*)a)[ch]; }
 
 // equal to xP = VSET(a3, a2, a1, a0)
 void load_vector_64(__m256i *xP, const uint64_t a0, const uint64_t a1, const uint64_t a2, const uint64_t a3)
