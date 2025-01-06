@@ -4,6 +4,7 @@ This repository contains the source code for the paper "High-Throughput EdDSA Ve
 ## Building and Testing
 The source code contains a simple makefile for Clang. 
 This makefile can be easily modified for other compilers (e.g. GCC), but the performance may be affected since our software was specifically "tuned" for Clang.
+
 To compile the source code and run the speed test, use the make command:
 
 ```
