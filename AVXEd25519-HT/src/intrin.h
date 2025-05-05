@@ -3,8 +3,6 @@
  * @file intrin.h
  * @version 1.0.0
  * @date 2024-10-01
- * @copyright Copyright © 2024 by University of Luxembourg.
- * @author Developed at SnT APSIA by: Bowen Zhang.
  *
  * @brief Header file for AVX2 intrinsics and macros for 4-way arithmetic and logical operations on packed 64-bit integers.
  *
