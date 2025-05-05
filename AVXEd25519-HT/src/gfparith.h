@@ -3,8 +3,6 @@
  * @file gfparith.h
  * @version 1.0.0
  * @date 2024-10-01
- * @copyright Copyright © 2024 by University of Luxembourg.
- * @author Developed at SnT APSIA by: Bowen Zhang.
  *
  * @brief Header file for AVX2-optimized arithmetic operations on field elements using radix-2^29 representation.
  *
