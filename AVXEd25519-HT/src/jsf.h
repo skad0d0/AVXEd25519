@@ -3,8 +3,6 @@
  * @file jsf.h
  * @version 1.0.0
  * @date 2024-10-01
- * @copyright Copyright © 2024 by University of Luxembourg.
- * @author Developed at SnT APSIA by: Bowen Zhang.
  *
  * @brief Header file for Joint Sparse Form (JSF) operations.
  *
